@@ -1,0 +1,365 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jjuuliak/agility/schema/course.schema.json",
+  "title": "Agility course",
+  "description": "One agility or jumping course: field, obstacle layout and performance sequence. The same format is used for digitized judge courses and generated courses. Version 1.0.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "meta",
+    "field",
+    "obstacles",
+    "sequence"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "meta": {
+      "$ref": "#/$defs/meta"
+    },
+    "field": {
+      "$ref": "#/$defs/field"
+    },
+    "obstacles": {
+      "description": "Physical obstacles placed on the field. Each physical obstacle appears once, even if the sequence uses it several times.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/obstacle"
+      }
+    },
+    "sequence": {
+      "description": "Performance order from start to finish. Item 0 is obstacle number 1. The same obstacle id may appear more than once (e.g. a tunnel taken twice).",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/step"
+      }
+    },
+    "notes": {
+      "description": "Free-text notes, e.g. digitization uncertainties. Not used by the checker.",
+      "type": "string"
+    }
+  },
+  "$defs": {
+    "meta": {
+      "type": "object",
+      "required": [
+        "course_id",
+        "source",
+        "class",
+        "discipline"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "course_id": {
+          "description": "Pseudonymous id, e.g. 'C-J01-03' for corpus courses or 'G-C-017' for generated ones. Never contains the judge's name.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "source": {
+          "enum": [
+            "corpus",
+            "generated",
+            "handmade"
+          ]
+        },
+        "class": {
+          "description": "SAGI class (tasoluokka).",
+          "enum": [
+            1,
+            2,
+            3
+          ]
+        },
+        "discipline": {
+          "description": "agility = agilityrata (contacts allowed), jumping = hyppyrata (no contact obstacles).",
+          "enum": [
+            "agility",
+            "jumping"
+          ]
+        },
+        "size_category": {
+          "description": "Size categories the course was used for; empty or omitted means all. Most courses are shared by all sizes; separate courses per size occur mainly in championships and open classes.",
+          "type": "array",
+          "items": {
+            "enum": [
+              "XS",
+              "S",
+              "M",
+              "SL",
+              "L"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "judge_id": {
+          "description": "Pseudonymous judge id from the consent log (corpus courses only).",
+          "type": "string",
+          "pattern": "^J[0-9]{2}$"
+        },
+        "year": {
+          "description": "Competition year only; full date omitted to reduce identifiability.",
+          "type": "integer",
+          "minimum": 2000
+        },
+        "requirement": {
+          "description": "Task requirement given to the generator (generated courses only); kept so the checker can verify it.",
+          "$ref": "#/$defs/requirement"
+        },
+        "provenance": {
+          "description": "Generation details (generated courses only).",
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "condition": {
+              "type": "string",
+              "description": "Test condition code, as defined in the study (e.g. 'C')."
+            },
+            "model": {
+              "type": "string"
+            },
+            "checker_version": {
+              "type": "string"
+            },
+            "prompt_version": {
+              "type": "string"
+            },
+            "attempts": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "run_id": {
+              "type": "string"
+            }
+          }
+        },
+        "digitization": {
+          "description": "Digitization details (corpus courses only).",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "digitized_by": {
+              "type": "string"
+            },
+            "date": {
+              "type": "string",
+              "format": "date"
+            },
+            "confidence": {
+              "description": "Overall confidence in positions: high = grid/measurements visible, low = estimated by eye.",
+              "enum": [
+                "high",
+                "medium",
+                "low"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "requirement": {
+      "type": "object",
+      "required": [
+        "obstacle_count"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "obstacle_count": {
+          "description": "Required number of obstacle performances (length of sequence).",
+          "type": "integer",
+          "minimum": 1
+        },
+        "required_types": {
+          "description": "Obstacle types that must appear, with minimum counts.",
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/obstacle_type"
+          },
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    "field": {
+      "description": "Coordinate system: metres, origin at the top-left corner of the ring, x to the right, y downwards (same as image coordinates).",
+      "type": "object",
+      "required": [
+        "width",
+        "height"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "width": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Extent along x in metres."
+        },
+        "height": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Extent along y in metres."
+        }
+      }
+    },
+    "point": {
+      "type": "object",
+      "required": [
+        "x",
+        "y"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        }
+      }
+    },
+    "obstacle_type": {
+      "description": "SAGI obstacle types. hurdle = aita, spread = okseri, wall = muuri, tyre = rengas, long_jump = pituushyppy, tunnel = tunneli, weave = pujottelu, a_frame = A-este, dog_walk = puomi, seesaw = keinu.",
+      "enum": [
+        "hurdle",
+        "spread",
+        "wall",
+        "tyre",
+        "long_jump",
+        "tunnel",
+        "weave",
+        "a_frame",
+        "dog_walk",
+        "seesaw"
+      ]
+    },
+    "obstacle": {
+      "type": "object",
+      "required": [
+        "id",
+        "type"
+      ],
+      "properties": {
+        "id": {
+          "description": "Unique within the course, e.g. 'o1'. Ids are labels, not performance numbers.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "type": {
+          "$ref": "#/$defs/obstacle_type"
+        }
+      },
+      "if": {
+        "properties": {
+          "type": {
+            "const": "tunnel"
+          }
+        }
+      },
+      "then": {
+        "$ref": "#/$defs/tunnel"
+      },
+      "else": {
+        "$ref": "#/$defs/placed_obstacle"
+      }
+    },
+    "placed_obstacle": {
+      "description": "Every obstacle except the tunnel: a centre point and a heading. Footprint dimensions come from the obstacle type (in the renderer and checker), not from the file.",
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "x",
+        "y",
+        "heading"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": true,
+        "type": {
+          "not": {
+            "const": "tunnel"
+          }
+        },
+        "x": {
+          "type": "number",
+          "description": "Centre x in metres."
+        },
+        "y": {
+          "type": "number",
+          "description": "Centre y in metres."
+        },
+        "heading": {
+          "description": "Direction of travel when the obstacle is taken 'forward', in degrees clockwise from +x (0 = to the right, 90 = down the field). For a hurdle the bar is perpendicular to the heading. For contacts, weaves and long jump, forward means entering at the end opposite the heading.",
+          "type": "number",
+          "minimum": 0,
+          "exclusiveMaximum": 360
+        }
+      }
+    },
+    "tunnel": {
+      "description": "Tunnel as a centre-line polyline from end A to end B. Length and curvature are computed from the path. Two points = straight tunnel.",
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "path"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": true,
+        "type": {
+          "const": "tunnel"
+        },
+        "path": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/point"
+          }
+        }
+      }
+    },
+    "step": {
+      "type": "object",
+      "required": [
+        "obstacle"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "obstacle": {
+          "description": "Id of the obstacle performed at this step.",
+          "type": "string"
+        },
+        "direction": {
+          "description": "forward = along heading (or path A→B for a tunnel); reverse = opposite. Defaults to forward.",
+          "enum": [
+            "forward",
+            "reverse"
+          ],
+          "default": "forward"
+        },
+        "path_control": {
+          "description": "Optional point(s) (metres) the dog path from this obstacle to the next passes through, set by hand in the digitizing tool: one point, or a list of up to two points in travel order. Overrides the automatic shape of that gap.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/point"
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 2,
+              "items": {
+                "$ref": "#/$defs/point"
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}
