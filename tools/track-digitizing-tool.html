@@ -1,0 +1,1464 @@
+<!doctype html>
+<html lang="fi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body>
+<title>Agilityradan digitointi</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one-screen tool — slim command bar on top, drawing canvas left, working panel right (stacks under the canvas on narrow screens). */
+:root {
+  --bg: #eef1ed;
+  --panel: #ffffff;
+  --ink: #1b221e;
+  --muted: #5b6760;
+  --line: #d5dbd5;
+  --soft: #f4f6f3;
+  --accent: #1f6b47;      /* ring turf green */
+  --accent-ink: #ffffff;
+  --mark: #1d4ed8;        /* overlay obstacles, stays the same on the light paper */
+  --contact: #e8a35c;     /* contact zones, same as the PNG renderer */
+  --paper: #ffffff;       /* the drawing surface is paper in both themes, on purpose */
+  --grid-minor: #eef0ee;
+  --grid-major: #d3d8d3;
+  --err: #b42318;
+  --warn: #a15c07;
+  --ok: #1f6b47;
+  --font-ui: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --r: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121614; --panel: #1a201c; --ink: #e5eae6; --muted: #98a59d; --line: #2c3530; --soft: #212823;
+    --accent: #5cbf8a; --accent-ink: #0c1a12; --err: #f28b82; --warn: #f2b45c; --ok: #5cbf8a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121614; --panel: #1a201c; --ink: #e5eae6; --muted: #98a59d; --line: #2c3530; --soft: #212823;
+  --accent: #5cbf8a; --accent-ink: #0c1a12; --err: #f28b82; --warn: #f2b45c; --ok: #5cbf8a;
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font-ui); font-size: 14px;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+button {
+  border: 1px solid var(--line); background: var(--panel); border-radius: var(--r);
+  padding: 6px 10px; cursor: pointer; white-space: nowrap;
+}
+button:hover { border-color: var(--muted); }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button.danger { color: var(--err); }
+button[disabled] { opacity: .45; cursor: default; }
+kbd {
+  font-family: var(--font-mono); font-size: 11px; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; background: var(--soft);
+}
+
+/* command bar */
+.bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding-block: 8px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  border-bottom: 1px solid var(--line); background: var(--panel);
+}
+.bar h1 { font-size: 15px; font-weight: 600; margin: 0 8px 0 0; letter-spacing: .01em; }
+.bar .grow { flex: 1; }
+.modes { display: flex; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.modes button { border: 0; border-radius: 0; border-right: 1px solid var(--line); background: var(--panel); }
+.modes button:last-child { border-right: 0; }
+.modes button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.file-btn { position: relative; overflow: hidden; }
+.file-btn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
+/* main area */
+.main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 330px; }
+.stage { position: relative; min-width: 0; min-height: 0; }
+canvas { display: block; width: 100%; height: 100%; touch-action: none; background: var(--bg); }
+.status {
+  position: absolute; left: 12px; bottom: 12px; right: 12px; pointer-events: none;
+  display: flex; justify-content: flex-start;
+}
+.status span {
+  background: color-mix(in srgb, var(--panel) 92%, transparent); border: 1px solid var(--line);
+  border-radius: var(--r); padding: 6px 10px; font-size: 13px; max-width: 100%;
+}
+.zoom { position: absolute; right: 12px; top: 12px; display: flex; gap: 6px; }
+
+.side {
+  border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; min-height: 0;
+  padding-block: 4px 24px; padding-left: 16px; padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+section { padding-block: 14px; border-bottom: 1px solid var(--line); display: grid; gap: 10px; }
+section:last-child { border-bottom: 0; }
+h2 {
+  margin: 0; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.hint { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+label.f { display: grid; gap: 3px; font-size: 12px; color: var(--muted); min-width: 0; }
+label.f input, label.f select, label.f textarea {
+  border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); padding: 5px 7px; min-width: 0; width: 100%;
+  color: var(--ink);
+}
+input[type="number"], .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+label.check { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+
+.palette { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.palette button { display: flex; justify-content: space-between; align-items: center; gap: 6px; text-align: left; }
+.palette button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+
+ol.seq { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; max-height: 260px; overflow-y: auto; }
+ol.seq li {
+  display: grid; grid-template-columns: 28px 1fr auto auto; gap: 6px; align-items: center;
+  padding: 3px 4px; border-radius: var(--r);
+}
+ol.seq li:hover { background: var(--soft); }
+ol.seq li.sel { background: var(--soft); box-shadow: inset 2px 0 0 var(--accent); }
+ol.seq .n { font-family: var(--font-mono); font-weight: 500; text-align: right; color: var(--muted); }
+ol.seq button { padding: 2px 6px; font-size: 12px; }
+ol.seq .rev { color: var(--warn); font-size: 12px; }
+.empty { color: var(--muted); font-size: 13px; margin: 0; }
+
+ul.issues { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; font-size: 13px; }
+ul.issues li { display: grid; grid-template-columns: 16px 1fr; gap: 6px; }
+ul.issues .e { color: var(--err); } ul.issues .w { color: var(--warn); } ul.issues .o { color: var(--ok); }
+.pill {
+  font-family: var(--font-mono); font-size: 11px; padding: 1px 6px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted); font-weight: 400; letter-spacing: 0; text-transform: none;
+}
+.pill.ok { color: var(--ok); border-color: currentColor; }
+.pill.bad { color: var(--err); border-color: currentColor; }
+textarea.json { font-family: var(--font-mono); font-size: 11px; width: 100%; height: 180px; resize: vertical;
+  border: 1px solid var(--line); border-radius: var(--r); background: var(--soft); padding: 6px; color: var(--ink); }
+details summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  background: var(--ink); color: var(--panel); padding: 8px 14px; border-radius: var(--r); font-size: 13px;
+  opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 20; max-width: calc(100% - 32px);
+}
+.toast.show { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
+
+@media (max-width: 820px) {
+  body { overflow: auto; }
+  .main { grid-template-columns: minmax(0, 1fr); grid-template-rows: 62vh auto; }
+  .side { border-left: 0; border-top: 1px solid var(--line); overflow: visible; padding-left: max(16px, env(safe-area-inset-left, 0px)); }
+}
+</style>
+
+<div class="bar">
+  <h1>Agilityradan digitointi</h1>
+  <label class="file-btn"><button type="button" tabindex="-1">Avaa piirros</button><input id="img-in" type="file" accept="image/*" aria-label="Avaa ratapiirros (kuva)"></label>
+  <label class="file-btn"><button type="button" tabindex="-1">Avaa JSON</button><input id="json-in" type="file" accept=".json,application/json" aria-label="Avaa rata JSON-tiedostosta"></label>
+  <button id="save" class="primary" type="button">Tallenna JSON</button>
+  <button id="copy" type="button">Kopioi JSON</button>
+  <span class="grow"></span>
+  <div class="modes" role="group" aria-label="Työtila">
+    <button type="button" data-mode="calib" aria-pressed="false">Mittakaava <kbd>K</kbd></button>
+    <button type="button" data-mode="place" aria-pressed="false">Esteet <kbd>1–0</kbd></button>
+    <button type="button" data-mode="select" aria-pressed="true">Valitse <kbd>V</kbd></button>
+    <button type="button" data-mode="seq" aria-pressed="false">Järjestys <kbd>J</kbd></button>
+  </div>
+  <button id="undo" type="button" title="Kumoa (Ctrl+Z)" aria-label="Kumoa">↶</button>
+  <button id="redo" type="button" title="Tee uudelleen (Ctrl+Shift+Z)" aria-label="Tee uudelleen">↷</button>
+  <button id="new" class="danger" type="button">Uusi rata</button>
+</div>
+
+<div class="main">
+  <div class="stage" id="stage">
+    <canvas id="cv" aria-label="Ratapiirros ja digitoidut esteet"></canvas>
+    <div class="zoom">
+      <button id="fit" type="button" title="Sovita näkymä (F, kun mitään ei ole valittu)">Sovita</button>
+    </div>
+    <div class="status"><span id="status"></span></div>
+  </div>
+
+  <aside class="side">
+    <section>
+      <h2>Mittakaava <span id="calib-pill" class="pill">ei piirrosta</span></h2>
+      <p class="hint">Avaa piirros ja klikkaa kehän <b>vasen yläkulma</b> ja <b>oikea alakulma</b>. Kirjoita kehän koko metreinä. Esteet pysyvät piirroksen kohdalla, vaikka muutat kokoa.</p>
+      <div class="grid2">
+        <label class="f">Leveys (x), m<input id="f-w" type="number" min="5" max="100" step="0.5" value="40"></label>
+        <label class="f">Korkeus (y), m<input id="f-h" type="number" min="5" max="100" step="0.5" value="30"></label>
+      </div>
+      <div class="row">
+        <button id="calib-start" type="button">Aseta kulmat</button>
+        <label class="check"><input id="show-img" type="checkbox" checked> Piirros</label>
+        <label class="check"><input id="show-path" type="checkbox" checked> Reitti</label>
+        <label class="check"><input id="show-len" type="checkbox" checked> Pituudet</label>
+      </div>
+      <label class="f">Piirroksen näkyvyys<input id="img-op" type="range" min="0.1" max="1" step="0.05" value="0.75"></label>
+    </section>
+
+    <section>
+      <h2>Esteet</h2>
+      <div class="palette" id="palette"></div>
+      <p class="hint">Klikkaa paikkaa ja vedä kulkusuuntaan. Putki: klikkaa pisteet päästä päähän, lopeta <kbd>Enter</kbd> tai tuplaklikkaus.</p>
+    </section>
+
+    <section id="sel-sec">
+      <h2>Valittu este <span id="sel-id" class="pill">–</span></h2>
+      <div id="sel-none" class="empty">Ei valintaa. Klikkaa estettä Valitse-tilassa.</div>
+      <div id="sel-body" hidden>
+        <div class="grid2">
+          <label class="f">Tyyppi<select id="sel-type"></select></label>
+          <label class="f">Suunta, °<input id="sel-h" type="number" step="1" min="0" max="359"></label>
+          <label class="f">x, m<input id="sel-x" type="number" step="0.1"></label>
+          <label class="f">y, m<input id="sel-y" type="number" step="0.1"></label>
+        </div>
+        <p id="sel-tunnel" class="hint" hidden></p>
+        <p class="hint"><kbd>Q</kbd>/<kbd>E</kbd> kääntää 5° (<kbd>Shift</kbd> 1°), <kbd>R</kbd> 90°, <kbd>F</kbd> vaihtaa kulkusuunnan, nuolet siirtävät, <kbd>Del</kbd> poistaa.</p>
+        <div class="row"><button id="sel-del" class="danger" type="button">Poista este</button></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Järjestys <span id="seq-count" class="pill">0</span></h2>
+      <p class="hint">Järjestys-tilassa klikkaa esteet suoritusjärjestyksessä. Suunta päätellään edellisestä ja seuraavasta esteestä; vaihda se tarvittaessa ⇄-napista. <kbd>Backspace</kbd> poistaa viimeisen.</p>
+      <p class="hint">Reitin muoto: Valitse-tilassa estevälillä on pieni kahva. Vedä sitä, niin reitti kulkee sen kautta (esim. esteen toiselta puolelta). Asetetun pisteen (täytetty) molemmin puolin ilmestyy uusi kahva, jolla voi lisätä pisteitä (enintään kolme välille), esim. lenkkiä varten. Tuplaklikkaus poistaa pisteen.</p>
+      <div class="row"><button id="seq-orient" type="button" title="Koskee vain kohtia, joiden suuntaa ei ole asetettu käsin tai luettu tiedostosta">Päättele arvatut suunnat</button></div>
+      <ol class="seq" id="seq"></ol>
+    </section>
+
+    <section>
+      <h2>Radan tiedot</h2>
+      <div class="grid2">
+        <label class="f">Radan tunnus<input id="m-id" type="text" value="C-J01-01" spellcheck="false"></label>
+        <label class="f">Lähde<select id="m-src"><option value="corpus">Korpus (tuomari)</option><option value="handmade">Käsin tehty</option><option value="generated">Generoitu</option></select></label>
+        <label class="f">Luokka<select id="m-class"><option value="3">3</option><option value="2">2</option><option value="1">1</option></select></label>
+        <label class="f">Lajimuoto<select id="m-disc"><option value="agility">Agilityrata</option><option value="jumping">Hyppyrata</option></select></label>
+        <div class="f" style="grid-column: 1 / -1">Kokoluokat (tyhjä = kaikki)
+          <div class="row" id="m-size">
+            <label class="check"><input type="checkbox" value="XS"> XS</label>
+            <label class="check"><input type="checkbox" value="S"> S</label>
+            <label class="check"><input type="checkbox" value="M"> M</label>
+            <label class="check"><input type="checkbox" value="SL"> SL</label>
+            <label class="check"><input type="checkbox" value="L"> L</label>
+          </div>
+        </div>
+        <label class="f">Tuomari (J01…)<input id="m-judge" type="text" placeholder="J01" spellcheck="false"></label>
+        <label class="f">Vuosi<input id="m-year" type="number" min="2000" max="2100" placeholder="2026"></label>
+        <label class="f">Varmuus<select id="m-conf"><option value="high">Korkea (ruudukko)</option><option value="medium" selected>Kohtalainen</option><option value="low">Matala (silmämäärä)</option></select></label>
+      </div>
+      <label class="f">Muistiinpanot<textarea id="m-notes" rows="2" placeholder="Epävarmat kohdat, tulkinnat…"></textarea></label>
+    </section>
+
+    <section>
+      <h2>Tarkistus <span id="chk-pill" class="pill">–</span></h2>
+      <ul class="issues" id="issues"></ul>
+      <details id="json-details">
+        <summary>Näytä JSON</summary>
+        <textarea id="json-out" class="json" readonly aria-label="Radan JSON"></textarea>
+      </details>
+    </section>
+  </aside>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+"use strict";
+
+// ---------- obstacle catalogue (FCI regulations in force 1.7.2025) ----------
+const TYPES = [
+  { t: "hurdle",    fi: "Hyppyeste",   key: "1" },
+  { t: "spread",    fi: "Okseri",      key: "2" },
+  { t: "wall",      fi: "Muuri",       key: "3" },
+  { t: "tyre",      fi: "Rengas",      key: "4" },
+  { t: "long_jump", fi: "Pituushyppy", key: "5" },
+  { t: "tunnel",    fi: "Putki",       key: "6" },
+  { t: "weave",     fi: "Pujottelu",   key: "7" },
+  { t: "a_frame",   fi: "A-este",      key: "8" },
+  { t: "dog_walk",  fi: "Puomi",       key: "9" },
+  { t: "seesaw",    fi: "Keinu",       key: "0" },
+];
+const FI = Object.fromEntries(TYPES.map(x => [x.t, x.fi]));
+// Obstacle geometry in plan view (seen from above), from the SAGI/FCI obstacle rules.
+// Sloped parts are projected onto the ground: plan length = sqrt(length^2 - height^2).
+// Mid-range values are used where the rules give a range.
+const A_FRAME = { ramp: 2.70, apex: 1.70, widthTop: 0.90, widthBottom: 1.15, zone: 1.06 };   // ramp 2.65–2.75 m, width >= 0.90 m, may widen to 1.15 m at the bottom
+const DOG_WALK = { plank: 3.70, height: 1.25, width: 0.30, zone: 0.90 };                      // planks 3.60–3.80 m, height 1.20–1.30 m
+const SEESAW = { plank: 3.70, width: 0.30, zone: 0.90 };                                       // drawn level
+const AF_HALF = Math.sqrt(A_FRAME.ramp ** 2 - A_FRAME.apex ** 2);          // 2.10 m
+const DW_RAMP = Math.sqrt(DOG_WALK.plank ** 2 - DOG_WALK.height ** 2);     // 3.48 m
+const JUMP = { bar: 1.25, wing: 0.50, wingDepth: 0.12 };   // bar 1.20–1.30 m, wings 0.40–0.60 m (hurdle and spread)
+const SPREAD_DEPTH = 0.50;                                  // L size
+const WALL = { width: 1.25, thickness: 0.20, tower: 0.30 }; // 1.20–1.30 m; ~0.20 m thick at the bottom; towers 0.20–0.40 m (round 0.30–0.40)
+const TYRE = { opening: 0.55, ring: 0.10, feet: 1.30, frame: 0.85 };  // opening 0.50–0.60 m; ring 0.08–0.12 m; feet 1.25–1.35 m along the direction of travel; frame uprights just outside the ring (estimated)
+const JUMP_WIDTH = JUMP.bar + 2 * JUMP.wing;                // 2.25 m
+// depth = along heading, width = across it (widest point), half = centre to entry/exit point
+const DIMS = {
+  hurdle:    { depth: JUMP.wingDepth, width: JUMP_WIDTH, half: 0.30 },
+  spread:    { depth: SPREAD_DEPTH, width: JUMP_WIDTH, half: SPREAD_DEPTH / 2 + 0.20 },
+  wall:      { depth: WALL.tower, width: WALL.width + 2 * WALL.tower, half: 0.35 },
+  tyre:      { depth: TYRE.feet, width: TYRE.frame, half: 0.40 },
+  long_jump: { depth: 0.90, width: 1.30, half: 0.45 },  // 0.9 m: middle of the SAGI range, as in the judges' course designer
+  weave:     { depth: 7.04, width: 0.20, half: 3.52 },
+  a_frame:   { depth: 2 * AF_HALF, width: A_FRAME.widthBottom, half: AF_HALF },                                   // 4.20 m
+  dog_walk:  { depth: DOG_WALK.plank + 2 * DW_RAMP, width: DOG_WALK.width, half: DOG_WALK.plank / 2 + DW_RAMP },   // 10.67 m
+  seesaw:    { depth: SEESAW.plank, width: SEESAW.width, half: SEESAW.plank / 2 },
+};
+// Contact zones measured along the ramp in the rules, drawn as their plan-view projection.
+const CONTACT_ZONE = {
+  a_frame: A_FRAME.zone * AF_HALF / A_FRAME.ramp,        // 1.06 m on the ramp -> 0.82 m in plan
+  dog_walk: DOG_WALK.zone * DW_RAMP / DOG_WALK.plank,    // 0.90 m -> 0.85 m
+  seesaw: SEESAW.zone,
+};
+// Width of an obstacle at distance x from its centre along the heading (A-frame widens towards the ground).
+function widthAt(type, x) {
+  if (type !== "a_frame") return DIMS[type].width;
+  return A_FRAME.widthTop + (A_FRAME.widthBottom - A_FRAME.widthTop) * Math.min(1, Math.abs(x) / AF_HALF);
+}
+const TUNNEL_W = 0.6;
+
+// Example course shown on first open (marked as an example, not real data).
+const DEMO = {"schema_version":"1.0","meta":{"course_id":"H-DEMO-02","source":"handmade","class":3,"discipline":"agility","year":2026},"field":{"width":40,"height":30},"obstacles":[{"id":"o1","type":"hurdle","x":5,"y":25,"heading":270},{"id":"o2","type":"hurdle","x":5,"y":18,"heading":270},{"id":"o3","type":"tunnel","path":[{"x":5,"y":12},{"x":5.8,"y":9.3},{"x":8.2,"y":7.8}]},{"id":"o4","type":"hurdle","x":14,"y":7.8,"heading":0},{"id":"o5","type":"a_frame","x":22,"y":7.8,"heading":0},{"id":"o6","type":"hurdle","x":30,"y":7.8,"heading":0},{"id":"o7","type":"tyre","x":34,"y":13,"heading":90},{"id":"o8","type":"spread","x":34,"y":19.5,"heading":90},{"id":"o9","type":"tunnel","path":[{"x":32,"y":25.5},{"x":29.5,"y":26.8},{"x":27,"y":26}]},{"id":"o10","type":"hurdle","x":21,"y":23,"heading":207},{"id":"o11","type":"weave","x":15,"y":16,"heading":180},{"id":"o12","type":"dog_walk","x":21,"y":11.5,"heading":0},{"id":"o13","type":"seesaw","x":31,"y":16.5,"heading":90},{"id":"o14","type":"hurdle","x":21,"y":28,"heading":180}],"sequence":[{"obstacle":"o1"},{"obstacle":"o2"},{"obstacle":"o3"},{"obstacle":"o4"},{"obstacle":"o5"},{"obstacle":"o6"},{"obstacle":"o7"},{"obstacle":"o8"},{"obstacle":"o9"},{"obstacle":"o10"},{"obstacle":"o11"},{"obstacle":"o12"},{"obstacle":"o13"},{"obstacle":"o9"},{"obstacle":"o14"}],"notes":"Esimerkkirata"};
+
+const DRAFT_KEY = "agility-digitizer-draft-v1";
+const $ = id => document.getElementById(id);
+
+// ---------- state ----------
+let course = { obstacles: [], sequence: [], nextId: 1 };
+let field = { width: 40, height: 30 };
+let isDemo = false;
+let img = null, imgOpacity = 0.75, showImg = true, showPath = true, showLengths = true;
+let calib = null;          // {x0, y0, sx, sy}: image px = world m * s + x0
+let calibClicks = null;    // [[px,py],[px,py]] in image pixels, once the user has clicked them
+let calibPending = [];     // clicks in progress
+let mode = "select", placeType = "hurdle", selectedId = null;
+let tunnelDraft = [];
+let lastHeading = {};
+let view = { scale: 20, ox: 40, oy: 40 };
+let hover = null;
+const undoStack = [], redoStack = [];
+
+// ---------- geometry ----------
+const rad = d => d * Math.PI / 180;
+const norm360 = h => ((h % 360) + 360) % 360;
+const unit = h => [Math.cos(rad(h)), Math.sin(rad(h))];
+const add = (p, v, k = 1) => [p[0] + k * v[0], p[1] + k * v[1]];
+const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+const r2 = v => Math.round(v * 100) / 100;
+
+function rectPts(c, u, depth, width) {
+  const n = [-u[1], u[0]], out = [];
+  for (const [su, sn] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) out.push(add(add(c, u, su * depth / 2), n, sn * width / 2));
+  return out;
+}
+function catmull(points, samples = 12) {
+  if (points.length < 3) return points.slice();
+  const pts = [points[0], ...points, points[points.length - 1]], out = [];
+  for (let i = 1; i < pts.length - 2; i++) {
+    const [p0, p1, p2, p3] = [pts[i - 1], pts[i], pts[i + 1], pts[i + 2]];
+    for (let s = 0; s < samples; s++) {
+      const t = s / samples, t2 = t * t, t3 = t2 * t;
+      out.push([0, 1].map(k => 0.5 * (2 * p1[k] + (-p0[k] + p2[k]) * t + (2 * p0[k] - 5 * p1[k] + 4 * p2[k] - p3[k]) * t2 + (-p0[k] + 3 * p1[k] - 3 * p2[k] + p3[k]) * t3)));
+    }
+  }
+  out.push(points[points.length - 1]);
+  return out;
+}
+function outline(line, hw) {
+  const L = [], R = [];
+  line.forEach((p, i) => {
+    const a = line[Math.max(i - 1, 0)], b = line[Math.min(i + 1, line.length - 1)];
+    const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1, n = [-dy / l, dx / l];
+    L.push(add(p, n, hw)); R.push(add(p, n, -hw));
+  });
+  return L.concat(R.reverse());
+}
+function tangentOut(line, end) {
+  const [p, q] = end === "a" ? [line[0], line[1]] : [line[line.length - 1], line[line.length - 2]];
+  const dx = p[0] - q[0], dy = p[1] - q[1], l = Math.hypot(dx, dy) || 1;
+  return [dx / l, dy / l];
+}
+const tunnelLine = o => catmull(o.path.map(p => [p.x, p.y]));
+const polyLen = line => line.slice(1).reduce((s, p, i) => s + dist(p, line[i]), 0);
+
+function entryExit(o, dir) {
+  if (o.type === "tunnel") {
+    const line = tunnelLine(o), a = line[0], b = line[line.length - 1];
+    return dir === "reverse" ? { entry: b, exit: a, back: tangentOut(line, "b") } : { entry: a, exit: b, back: tangentOut(line, "a") };
+  }
+  const c = [o.x, o.y], u = unit(o.heading), h = DIMS[o.type].half;
+  let entry = add(c, u, -h), exit = add(c, u, h), back = [-u[0], -u[1]];
+  if (dir === "reverse") { [entry, exit] = [exit, entry]; back = u; }
+  return { entry, exit, back };
+}
+function exitDir(o, dir) {
+  if (o.type === "tunnel") { const l = tunnelLine(o); return dir === "reverse" ? tangentOut(l, "a") : tangentOut(l, "b"); }
+  const u = unit(o.heading); return dir === "reverse" ? [-u[0], -u[1]] : u;
+}
+function centreOf(o) {
+  if (o.type !== "tunnel") return [o.x, o.y];
+  const l = tunnelLine(o), a = l[0], b = l[l.length - 1]; return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+}
+// Direction guess from the course flow (same rule as orient.py). Steps flipped by hand (⇄) are kept.
+function orientSteps(from = 0) {
+  const seq = course.sequence;
+  let prevExit = null;
+  if (from > 0) { const ps = seq[from - 1], po = byId(ps.obstacle); if (po) prevExit = entryExit(po, ps.direction).exit; }
+  for (let i = from; i < seq.length; i++) {
+    const s = seq[i], o = byId(s.obstacle); if (!o) continue;
+    if (!s.manual) {
+      const no = seq[i + 1] && byId(seq[i + 1].obstacle), nxt = no ? centreOf(no) : null, here = centreOf(o);
+      if (o.type === "tunnel") {
+        const l = tunnelLine(o), a = l[0], b = l[l.length - 1];
+        const ref = prevExit || (nxt && [2 * here[0] - nxt[0], 2 * here[1] - nxt[1]]);
+        s.direction = !ref || dist(a, ref) <= dist(b, ref) ? "forward" : "reverse";
+      } else {
+        const p = prevExit || here, q = nxt || here, u = unit(o.heading);
+        const v = [q[0] - p[0], q[1] - p[1]];
+        s.direction = (v[0] === 0 && v[1] === 0) || u[0] * v[0] + u[1] * v[1] >= 0 ? "forward" : "reverse";
+      }
+    }
+    prevExit = entryExit(o, s.direction).exit;
+  }
+}
+function bezier(p0, c0, c1, p1, n = 24) {
+  const out = [];
+  for (let s = 0; s <= n; s++) {
+    const t = s / n, a = (1 - t) ** 3, b = 3 * (1 - t) ** 2 * t, c = 3 * (1 - t) * t * t, d = t ** 3;
+    out.push([a * p0[0] + b * c0[0] + c * c1[0] + d * p1[0], a * p0[1] + b * c0[1] + c * c1[1] + d * p1[1]]);
+  }
+  return out;
+}
+// Approximate dog path — same model as dogpath.py (render.py): one smooth centripetal
+// Catmull-Rom curve through waypoints at the obstacles, with as few helper points as possible.
+const STRAIGHT_JUMPS = new Set(["spread", "tyre", "wall"]), JUMPS = new Set(["hurdle", "spread", "tyre", "wall"]);  // long jump: start and end, like a contact
+const JUMP_PIECE = 0.5, STRAIGHT_MAX_ANGLE = 15, HURDLE_MAX_ANGLE = 65, UTURN_MAX_ANGLE = 45;
+const WING_CLEARANCE = 0.15, WEAVE_SIDE = 0.7, TURN_RADIUS = 1.2, BIG_TURN = 90;
+const normV = v => { const l = Math.hypot(v[0], v[1]); return l > 1e-9 ? [v[0] / l, v[1] / l] : null; };
+const dotV = (a, b) => a[0] * b[0] + a[1] * b[1];
+const turnV = (a, b) => Math.atan2(a[0] * b[1] - a[1] * b[0], dotV(a, b));
+function clampDir(base, want, maxDeg) {
+  let ang = Math.atan2(base[0] * want[1] - base[1] * want[0], dotV(base, want));
+  const lim = maxDeg * Math.PI / 180; ang = Math.max(-lim, Math.min(lim, ang));
+  const ca = Math.cos(ang), sa = Math.sin(ang); return [base[0] * ca - base[1] * sa, base[0] * sa + base[1] * ca];
+}
+const rotV = (v, ang) => { const ca = Math.cos(ang), sa = Math.sin(ang); return [v[0] * ca - v[1] * sa, v[0] * sa + v[1] * ca]; };
+function segIntersect(p1, p2, q1, q2) {
+  const o = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  return (o(q1, q2, p1) > 0) !== (o(q1, q2, p2) > 0) && (o(p1, p2, q1) > 0) !== (o(p1, p2, q2) > 0);
+}
+function centripetalSpline(points, step = 0.1) {
+  const pts = [points[0]], keep = [0];
+  for (const p of points.slice(1)) { if (dist(p, pts[pts.length - 1]) > 1e-3) pts.push(p); keep.push(pts.length - 1); }
+  if (pts.length < 2) return { line: pts, at: points.map(() => 0) };
+  const ext = [add(pts[0], [pts[0][0] - pts[1][0], pts[0][1] - pts[1][1]]), ...pts, add(pts[pts.length - 1], [pts[pts.length - 1][0] - pts[pts.length - 2][0], pts[pts.length - 1][1] - pts[pts.length - 2][1]])];
+  const out = [pts[0]], at = [0];
+  for (let i = 1; i < ext.length - 2; i++) {
+    const [p0, p1, p2, p3] = [ext[i - 1], ext[i], ext[i + 1], ext[i + 2]];
+    const t0 = 0, t1 = t0 + Math.sqrt(dist(p0, p1)), t2 = t1 + Math.sqrt(dist(p1, p2)), t3 = t2 + Math.sqrt(dist(p2, p3));
+    const n = Math.max(2, Math.floor(dist(p1, p2) / step));
+    for (let s = 1; s <= n; s++) {
+      const t = t1 + (t2 - t1) * s / n;
+      const lerp = (a, b, ta, tb) => tb - ta < 1e-9 ? a : [((tb - t) * a[0] + (t - ta) * b[0]) / (tb - ta), ((tb - t) * a[1] + (t - ta) * b[1]) / (tb - ta)];
+      const a1 = lerp(p0, p1, t0, t1), a2 = lerp(p1, p2, t1, t2), a3 = lerp(p2, p3, t2, t3);
+      out.push(lerp(lerp(a1, a2, t0, t2), lerp(a2, a3, t1, t3), t1, t2));
+    }
+    at.push(out.length - 1);
+  }
+  return { line: out, at: keep.map(k => at[k]) };
+}
+// centripetalSpline, but at each break (index, direction) the curve passes through the point moving
+// exactly in that direction (the weave's pole line, a contact's plank): the line rounds in tangent,
+// runs straight through and leaves the same way - no corner, no overshoot. Phantom points are placed so
+// that the Catmull-Rom tangent at the break point follows the given direction exactly.
+const TANGENT_LEAD = 1.5, CONTACT_LEAD = 0.8, HURDLE_LEAD = 0.8, HURDLE_LEAD_TURN = 1.4;
+function brokenSpline(points, breaks, step = 0.1) {
+  const ok = breaks.filter(([i]) => i > 0 && i < points.length - 1);
+  const dirs = new Map(ok.map(([i, u]) => [i, u])), leads = new Map(ok.map(([i, , l]) => [i, l === undefined ? TANGENT_LEAD : l]));
+  const bounds = [0, ...[...dirs.keys()].sort((x, y) => x - y), points.length - 1];
+  const line = [], at = new Array(points.length).fill(0);
+  for (let q = 0; q + 1 < bounds.length; q++) {
+    const a = bounds[q], b = bounds[q + 1], segPts = points.slice(a, b + 1);
+    if (dirs.has(a)) { const u = dirs.get(a), p = points[Math.min(a + 1, b)], c = Math.max((p[0] - points[a][0]) * u[0] + (p[1] - points[a][1]) * u[1], 0) + leads.get(a); segPts.unshift(add(p, u, -c)); }
+    if (dirs.has(b)) { const u = dirs.get(b), p = points[Math.max(b - 1, a)], c = Math.max((points[b][0] - p[0]) * u[0] + (points[b][1] - p[1]) * u[1], 0) + leads.get(b); segPts.push(add(p, u, c)); }
+    const r = centripetalSpline(segPts, step);
+    const lo = dirs.has(a) ? r.at[1] : 0, hi = dirs.has(b) ? r.at[r.at.length - 2] : r.at[r.at.length - 1];
+    const piece = r.line.slice(lo, hi + 1), off = line.length ? line.length - 1 : 0;
+    line.push(...(line.length ? piece.slice(1) : piece));
+    const base = dirs.has(a) ? 1 : 0;
+    for (let k = 0; k <= b - a; k++) at[a + k] = off + r.at[base + k] - lo;
+  }
+  return { line, at };
+}
+const alongPts = (a, b, sp = 1) => { const n = Math.max(1, Math.floor(dist(a, b) / sp)); return Array.from({ length: n + 1 }, (_, k) => [a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n]); };
+function resample(line, sp = 0.8) { const out = [line[0]]; let acc = 0; for (let i = 1; i < line.length; i++) { acc += dist(line[i - 1], line[i]); if (acc >= sp) { out.push(line[i]); acc = 0; } } if (out[out.length - 1] !== line[line.length - 1]) out.push(line[line.length - 1]); return out; }
+function dogPath() {
+  const seq = course.sequence.map(s => ({ o: byId(s.obstacle), d: s.direction })).filter(x => x.o);
+  if (!seq.length) return { through: [], gaps: [] };
+  // hand-set control points: the gap after step i passes through control[i] and gets no automatic helpers
+  const control = {}; course.sequence.forEach((s, i) => { if (s.path_control && s.path_control.length) control[i] = s.path_control.map(q => [q.x, q.y]); });
+  const extra = {}, wingDone = {};
+  for (const i in control) extra[i] = control[i].map(q => ["post", q]);
+  const travel = (o, d) => { const u = unit(o.heading); return d === "reverse" ? [-u[0], -u[1]] : u; };
+  const refPoint = j => { const { o, d } = seq[j]; if (o.type === "weave") return add([o.x, o.y], travel(o, d), -3.2); if (JUMPS.has(o.type)) return [o.x, o.y]; if (o.type === "tunnel") { const l = tunnelLine(o); return d === "reverse" ? l[l.length - 1] : l[0]; } return entryExit(o, d).entry; };
+  const hurdleDir = new Map();  // step index -> crossing direction at the bar centre (core point 0)
+  const build = () => {
+    hurdleDir.clear();
+    const groups = [];
+    seq.forEach(({ o, d }, i) => {
+      const pre = (extra[i] || []).filter(e => e[0] === "pre").map(e => e[1]), post = (extra[i] || []).filter(e => e[0] === "post").map(e => e[1]);
+      let core;
+      if (JUMPS.has(o.type)) {
+        const base = travel(o, d), c = [o.x, o.y];
+        let prev = null;
+        if (groups.length) { const g = groups[groups.length - 1], tail = g[1].concat(g[2]); prev = tail[tail.length - 1]; }
+        const nxt = control[i] ? control[i][0] : (i + 1 < seq.length ? refPoint(i + 1) : null);
+        const vin = prev ? normV([c[0] - prev[0], c[1] - prev[1]]) : null, vout = nxt ? normV([nxt[0] - c[0], nxt[1] - c[1]]) : null;
+        const last = i === seq.length - 1;
+        if (o.type === "wall") {
+          core = [c];  // the wall is just a point the line passes through: no direction rule at all
+        } else if (STRAIGHT_JUMPS.has(o.type)) {
+          // must be taken straight: one point at the centre passed in the jump's own direction, no hidden points
+          // (a few degrees of slack, STRAIGHT_MAX_ANGLE, so a gentle arc can pass without a bump)
+          let best = null, fix = base;
+          for (let k = -10; k <= 10; k++) { const cand = rotV(base, STRAIGHT_MAX_ANGLE * Math.PI / 180 * k / 10); const cost = (vin ? turnV(vin, cand) ** 2 : 0) + (vout ? turnV(cand, vout) ** 2 : 0); if (best === null || cost < best - 1e-9) { best = cost; fix = cand; } }
+          const sharp = Math.max(vin ? Math.abs(turnV(vin, fix)) : 0, vout ? Math.abs(turnV(fix, vout)) : 0);
+          core = [c]; hurdleDir.set(i, [fix, HURDLE_LEAD + HURDLE_LEAD_TURN * sharp / Math.PI]);
+        } else {
+          // crossing direction from the course flow (balanced turn before/after, within the cap); hand-set points
+          // beside the jump decide instead (no angle limit then, the hand-set points rule).
+          const parts = [vin, vout].filter(Boolean), want = parts.length ? normV([parts.reduce((s, v) => s + v[0], 0), parts.reduce((s, v) => s + v[1], 0)]) : null;
+          const hand = !!(control[i - 1] || control[i]);
+          const turnBack = vout && dotV(vout, base) < -0.3 && !hand && !last;
+          let fix;
+          if (hand && want && dotV(want, base) > 0.05) fix = want;
+          else {
+            let best = null; fix = base;
+            const cap = turnBack ? UTURN_MAX_ANGLE : HURDLE_MAX_ANGLE;
+            for (let k = -10; k <= 10; k++) { const cand = rotV(base, cap * Math.PI / 180 * k / 10); const cost = (vin ? turnV(vin, cand) ** 2 : 0) + (vout ? turnV(cand, vout) ** 2 : 0); if (best === null || cost < best - 1e-9) { best = cost; fix = cand; } }
+          }
+          // one smooth point at the bar centre with a crossing direction, no hidden extra points
+          const sharp = Math.max(vin ? Math.abs(turnV(vin, fix)) : 0, vout ? Math.abs(turnV(fix, vout)) : 0);
+          core = [c]; hurdleDir.set(i, [fix, HURDLE_LEAD + HURDLE_LEAD_TURN * sharp / Math.PI]);
+          if (turnBack) {
+            const cr = fix;
+            const land = add(c, cr, JUMP_PIECE), v = normV([nxt[0] - land[0], nxt[1] - land[1]]) || vout, d2 = turnV(cr, v);
+            const side = d2 > 0 ? 1 : -1, perp = [-cr[1] * side, cr[0] * side], sweep = Math.abs(d2), centre = add(land, perp, TURN_RADIUS);
+            for (const f of (sweep >= 0.75 * Math.PI ? [0.5, 1.0] : [0.5])) { const a = f * sweep; core.push(add(add(centre, perp, -TURN_RADIUS * Math.cos(a)), cr, TURN_RADIUS * Math.sin(a))); }
+          }
+        }
+      } else if (o.type === "weave") {
+        // straight from the previous obstacle into the gap between poles 1 and 2, straight along the poles, out of the last gap
+        const us = travel(o, d), c = [o.x, o.y];
+        core = alongPts(add(c, us, -3.2), add(c, us, 3.2), 1.0);
+      } else if (o.type === "tunnel") {
+        const l = tunnelLine(o); core = resample(d === "reverse" ? l.slice().reverse() : l);
+      } else {
+        const ee = entryExit(o, d), u = normV([ee.exit[0] - ee.entry[0], ee.exit[1] - ee.entry[1]]);
+        // contacts and long jump: no run-in/run-out points, the line reaches the start/end along the obstacle (tangent break)
+        core = alongPts(ee.entry, ee.exit, 1.2);
+      }
+      groups.push([pre, core, post]);
+    });
+    const pts = [], spans = []; let k = 0;
+    for (const [pre, core, post] of groups) { pts.push(...pre, ...core, ...post); spans.push([k, k + pre.length, k + pre.length + core.length - 1, k + pre.length + core.length + post.length - 1]); k += pre.length + core.length + post.length; }
+    return { pts, spans };
+  };
+  const TANGENT_KINDS = new Set(["weave", "a_frame", "dog_walk", "seesaw", "long_jump"]);
+  const tangentBreaks = spans => seq.flatMap(({ o, d }, i) => TANGENT_KINDS.has(o.type) ? [[spans[i][1], travel(o, d), o.type === "weave" ? TANGENT_LEAD : CONTACT_LEAD], [spans[i][2], travel(o, d), o.type === "weave" ? TANGENT_LEAD : CONTACT_LEAD]] : []).concat([...hurdleDir].map(([i, [u, lead]]) => [spans[i][1], u, lead]));
+  const jumps = seq.filter(x => JUMPS.has(x.o.type)).map(({ o, d }) => ({ o, base: travel(o, d) }));
+  for (let pass = 0; pass < 5; pass++) {
+    const { pts, spans } = build(), { line, at } = brokenSpline(pts, tangentBreaks(spans));
+    let changed = false;
+    const own = {};
+    seq.forEach(({ o }, i) => { (own[o.id] = own[o.id] || []).push([at[spans[i][1]] - 2, at[spans[i][2]] + 2]); });  // a little margin round the obstacle
+    const gapRanges = spans.slice(1).map((sp, i) => [at[spans[i][2]], at[sp[1]]]);
+    for (const { o } of jumps) {
+      const u = unit(o.heading), n = [-u[1], u[0]], c = [o.x, o.y], w = DIMS[o.type].width / 2;
+      const wb = o.type === "hurdle" ? (DIMS.hurdle.width - 2 * 0.5) / 2 - 0.15 : w;  // a hurdle's low wings may be crossed; only the bar (not its very ends) counts
+      const bar = [add(c, n, -wb), add(c, n, wb)], ends = [add(c, n, -w), add(c, n, w)];
+      gapRanges.forEach(([g0, g1], gi) => {
+        if (control[gi] || (wingDone[o.id] || []).includes(gi)) return;
+        for (let k = g0 + 1; k <= g1; k++) {
+          if ((own[o.id] || []).some(([lo, hi]) => lo <= k - 1 && k <= hi)) continue;
+          if (segIntersect(line[k - 1], line[k], bar[0], bar[1])) {
+            // the line passes through this jump's bar or wings: go around the nearer wing end
+            const p = line[k], e = dist(ends[0], p) <= dist(ends[1], p) ? ends[0] : ends[1], out = normV([e[0] - c[0], e[1] - c[1]]);
+            const detour = add(e, out, WING_CLEARANCE);
+            if (dist(p, line[g0]) <= dist(p, line[g1])) (extra[gi] = extra[gi] || []).push(["post", detour]);
+            else (extra[gi + 1] = extra[gi + 1] || []).unshift(["pre", detour]);
+            (wingDone[o.id] = wingDone[o.id] || []).push(gi); changed = true; break;
+          }
+        }
+      });
+    }
+    seq.forEach(({ o, d }, i) => {
+      if (o.type !== "weave" || i === 0 || (extra[i] && extra[i].length) || control[i - 1]) return;
+      const us = travel(o, d), right = [-us[1], us[0]], first = add([o.x, o.y], us, -3.2), prev = pts[spans[i][0] - 1];
+      const v = normV([first[0] - prev[0], first[1] - prev[1]]);
+      // the dog must reach the gap with pole 1 on its left, i.e. coming from the right of the pole line
+      if (v && dotV(v, right) > -0.1) { (extra[i] = extra[i] || []).push(["pre", add(add(first, us, -1.2), right, WEAVE_SIDE)]); changed = true; }
+    });
+    if (!changed) break;
+  }
+  const { pts, spans } = build(); window.__lastPts = pts; let { line, at } = brokenSpline(pts, tangentBreaks(spans));
+  // the line ends on the last obstacle, not beyond it
+  const lastO = seq[seq.length - 1].o, lsp = spans[spans.length - 1];
+  if (JUMPS.has(lastO.type)) { const end = lastO.type === "hurdle" ? at[lsp[1]] : at[lsp[2]]; line = line.slice(0, end + 1); at = at.map(k => Math.min(k, end)); }
+  const marks = spans.map(([, c0, c1]) => [at[c0], at[c1]]);
+  return { through: marks.map(([a, b]) => line.slice(a, b + 1)), gaps: marks.slice(1).map((m, i) => line.slice(marks[i][1], m[0] + 1)) };
+}
+// Gap lengths the way the judges' course designer measures them: along the line, from the point where the dog
+// leaves one obstacle to the point where it reaches the next one. Hurdles, spread, wall, tyre and long jump are
+// measured at their centre, tunnels and contacts at their ends, the weave at the first / last gap (±3.2 m).
+function gapRefs(o, d) {
+  if (JUMPS.has(o.type)) { const c = [o.x, o.y]; return { a: c, b: c }; }
+  if (o.type === "weave") { const u0 = unit(o.heading), u = d === "reverse" ? [-u0[0], -u0[1]] : u0, c = [o.x, o.y]; return { a: add(c, u, -3.2), b: add(c, u, 3.2) }; }
+  const e = entryExit(o, d); return { a: e.entry, b: e.exit };
+}
+const nominalTunnel = L => Math.min(6, Math.max(3, Math.round(L)));  // tunnels are sold as 3, 4, 5 or 6 m (a check only)
+function gapLengths(dp) {
+  const seq = course.sequence.map(s => ({ o: byId(s.obstacle), d: s.direction === "reverse" ? "reverse" : "forward" })).filter(s => s.o);
+  const near = (line, p) => { let b = 0, bd = Infinity; line.forEach((q, j) => { const v = dist(q, p); if (v < bd) { bd = v; b = j; } }); return b; };
+  const out = [];
+  for (let i = 0; i + 1 < seq.length && i < dp.gaps.length; i++) {
+    const from = gapRefs(seq[i].o, seq[i].d).b, to = gapRefs(seq[i + 1].o, seq[i + 1].d).a;
+    const t0 = dp.through[i], t1 = dp.through[i + 1], g = dp.gaps[i];
+    const L = polyLen(t0.slice(near(t0, from))) + polyLen(g) + polyLen(t1.slice(0, near(t1, to) + 1));
+    out.push({ len: L, straight: dist(from, to), mid: g.length ? g[Math.floor(g.length / 2)] : from, line: g });
+  }
+  const total = dp.through.concat(dp.gaps).reduce((s, l) => s + polyLen(l), 0);
+  return { gaps: out, total };
+}
+const fi1 = v => v.toFixed(1).replace(".", ",");
+function drawGapLengths(dp, avoid = []) {
+  const { gaps, total } = gapLengths(dp);
+  ctx.save();
+  ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.lineJoin = "round";
+  const big = `700 ${px(13)}px IBM Plex Sans, system-ui, sans-serif`, small = `600 ${px(11)}px IBM Plex Sans, system-ui, sans-serif`;
+  // Like the judges' course designer: the path length, and under it the straight distance in grey, set just
+  // beside the line with a white halo instead of a box. Each label slides along its gap (and picks the side of
+  // the line) to the spot where it covers no other line, obstacle, number, handle or label.
+  const obsPts = course.obstacles.filter(o => o.type !== "tunnel").map(o => [o.x, o.y]);
+  const placed = [];
+  gaps.forEach((g, gi) => {
+    const t1 = fi1(g.len), t2 = `(${fi1(g.straight)})`;
+    ctx.font = big; const w1 = ctx.measureText(t1).width; ctx.font = small; const w2 = ctx.measureText(t2).width;
+    const w = Math.max(w1, w2) + px(4), h = px(28);
+    const L = g.line; if (L.length < 2) return;
+    const cum = [0]; for (let j = 1; j < L.length; j++) cum.push(cum[j - 1] + dist(L[j - 1], L[j]));
+    const at = f => { const target = f * cum[cum.length - 1]; let j = 1; while (j < L.length - 1 && cum[j] < target) j++; return j; };
+    const others = dp.through.concat(dp.gaps.filter((_, k) => k !== gi));
+    const inBox = (q, c, pad) => Math.abs(q[0] - c[0]) <= w / 2 + pad && Math.abs(q[1] - c[1]) <= h / 2 + pad;
+    let best = null, bc = Infinity;
+    for (const f of [0.5, 0.42, 0.58, 0.35, 0.65, 0.28, 0.72]) {
+      const j = at(f), p = L[j], a = L[Math.max(j - 3, 0)], b = L[Math.min(j + 3, L.length - 1)];
+      const t = normV([b[0] - a[0], b[1] - a[1]]) || [1, 0], n = [-t[1], t[0]];
+      // distance from the line to the label centre so that the label's edge sits about 4 px from the line
+      const off = Math.abs(n[0]) * w / 2 + Math.abs(n[1]) * h / 2 + px(4);
+      for (const side of [1, -1]) {
+        const c = add(p, n, side * off);
+        let cost = Math.abs(f - 0.5) * 2 + (side < 0 ? 0.01 : 0);
+        for (const l of others) for (let k = 0; k < l.length; k += 2) if (inBox(l[k], c, px(1))) cost += 3;
+        for (let k = 0; k < L.length; k += 2) if (inBox(L[k], c, -px(1))) cost += 3;   // not over its own line either
+        for (const q of obsPts) if (inBox(q, c, 0.5)) cost += 20;
+        for (const q of avoid) if (inBox(q, c, px(8))) cost += 15;
+        for (const q of placed) if (Math.abs(q.c[0] - c[0]) < (q.w + w) / 2 + px(3) && Math.abs(q.c[1] - c[1]) < (q.h + h) / 2 + px(1)) cost += 30;
+        if (cost < bc) { bc = cost; best = c; }
+      }
+    }
+    placed.push({ c: best, w, h });
+    const halo = (txt, y) => { ctx.lineWidth = px(4); ctx.strokeStyle = "#ffffff"; ctx.strokeText(txt, best[0], y); ctx.fillText(txt, best[0], y); };
+    ctx.font = big; ctx.fillStyle = "#111a15"; halo(t1, best[1] - px(6));
+    ctx.font = small; ctx.fillStyle = "#3d4741"; halo(t2, best[1] + px(8));
+  });
+  // total, under the bottom-right corner of the ring
+  ctx.font = `500 ${px(11)}px IBM Plex Sans, system-ui, sans-serif`; ctx.textAlign = "right"; ctx.textBaseline = "top";
+  ctx.fillStyle = colors.ink; ctx.fillText(`Reitin pituus ${fi1(total)} m · estevälit ${fi1(gaps.reduce((s, g) => s + g.len, 0))} m`, field.width, field.height + px(6));
+  ctx.restore();
+}
+window.__gapLengths = () => gapLengths(dogPath());
+window.__dogPath = () => dogPath();  // for tests
+window.__test = () => ({ view, course, handles: pathHandles });
+window.__spline = (pts) => centripetalSpline(pts);
+function hitTest(o, p) {
+  if (o.type === "tunnel") {
+    const line = tunnelLine(o);
+    for (let i = 1; i < line.length; i++) if (segDist(p, line[i - 1], line[i]) < TUNNEL_W / 2 + 0.35) return true;
+    return false;
+  }
+  const d = DIMS[o.type], u = unit(o.heading), n = [-u[1], u[0]];
+  const v = [p[0] - o.x, p[1] - o.y];
+  const a = Math.abs(v[0] * u[0] + v[1] * u[1]), b = Math.abs(v[0] * n[0] + v[1] * n[1]);
+  return a <= Math.max(d.depth, 0.6) / 2 + 0.3 && b <= d.width / 2 + 0.3;
+}
+function segDist(p, a, b) {
+  const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy || 1;
+  const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2));
+  return dist(p, [a[0] + t * dx, a[1] + t * dy]);
+}
+const byId = id => course.obstacles.find(o => o.id === id);
+
+// ---------- image calibration ----------
+const w2i = (p, c = calib) => [p[0] * c.sx + c.x0, p[1] * c.sy + c.y0];
+const i2w = (p, c = calib) => [(p[0] - c.x0) / c.sx, (p[1] - c.y0) / c.sy];
+function calibFrom(clicks) {
+  const [[ax, ay], [bx, by]] = clicks;
+  const x0 = Math.min(ax, bx), y0 = Math.min(ay, by), x1 = Math.max(ax, bx), y1 = Math.max(ay, by);
+  return { x0, y0, sx: (x1 - x0) / field.width, sy: (y1 - y0) / field.height };
+}
+function applyCalib(newC, keepAligned) {
+  if (keepAligned && calib) {
+    const mv = p => i2w(w2i(p, calib), newC);
+    for (const o of course.obstacles) {
+      if (o.type === "tunnel") o.path = o.path.map(q => { const [x, y] = mv([q.x, q.y]); return { x, y }; });
+      else [o.x, o.y] = mv([o.x, o.y]);
+    }
+  }
+  calib = newC;
+}
+
+// ---------- history & persistence ----------
+const snap = () => JSON.stringify({ obstacles: course.obstacles, sequence: course.sequence, nextId: course.nextId });
+let lastSnap = snap();
+function commit() {
+  const s = snap();
+  if (s === lastSnap) return;
+  undoStack.push(lastSnap); if (undoStack.length > 200) undoStack.shift();
+  redoStack.length = 0; lastSnap = s; isDemo = false;
+  changed();
+}
+function restore(s) { const v = JSON.parse(s); course.obstacles = v.obstacles; course.sequence = v.sequence; course.nextId = v.nextId; lastSnap = s; if (selectedId && !byId(selectedId)) selectedId = null; changed(); }
+function undo() { if (undoStack.length) { redoStack.push(lastSnap); restore(undoStack.pop()); } }
+function redo() { if (redoStack.length) { undoStack.push(lastSnap); restore(redoStack.pop()); } }
+function saveDraft() {
+  if (isDemo) return;
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify(buildCourse())); } catch (e) { /* storage unavailable: drafts are optional */ }
+}
+function changed() { saveDraft(); updatePanels(); redraw(); }
+
+// ---------- course <-> JSON ----------
+function readMeta() {
+  const m = {
+    course_id: $("m-id").value.trim(),
+    source: $("m-src").value,
+    class: Number($("m-class").value),
+    discipline: $("m-disc").value,
+  };
+  const sizes = [...document.querySelectorAll("#m-size input:checked")].map(i => i.value);
+  if (sizes.length) m.size_category = sizes;
+  const judge = $("m-judge").value.trim(); if (judge) m.judge_id = judge;
+  const year = $("m-year").value.trim(); if (year) m.year = Number(year);
+  if (m.source === "corpus") m.digitization = { date: new Date().toISOString().slice(0, 10), confidence: $("m-conf").value };
+  return m;
+}
+function buildCourse() {
+  const obstacles = course.obstacles.map(o => o.type === "tunnel"
+    ? { id: o.id, type: o.type, path: o.path.map(p => ({ x: r2(p.x), y: r2(p.y) })) }
+    : { id: o.id, type: o.type, x: r2(o.x), y: r2(o.y), heading: norm360(Math.round(o.heading)) % 360 });
+  const sequence = course.sequence.map(s => {
+    const out = s.direction === "reverse" ? { obstacle: s.obstacle, direction: "reverse" } : { obstacle: s.obstacle };
+    if (s.path_control && s.path_control.length) out.path_control = s.path_control.length === 1 ? { x: r2(s.path_control[0].x), y: r2(s.path_control[0].y) } : s.path_control.map(q => ({ x: r2(q.x), y: r2(q.y) }));
+    return out;
+  });
+  const out = { schema_version: "1.0", meta: readMeta(), field: { width: field.width, height: field.height }, obstacles, sequence };
+  const notes = $("m-notes").value.trim(); if (notes) out.notes = notes;
+  return out;
+}
+function loadCourse(c, { demo = false } = {}) {
+  if (!c || !Array.isArray(c.obstacles) || !Array.isArray(c.sequence) || !c.field) throw new Error("Tiedostosta puuttuu field, obstacles tai sequence.");
+  field = { width: Number(c.field.width) || 40, height: Number(c.field.height) || 30 };
+  $("f-w").value = field.width; $("f-h").value = field.height;
+  const m = c.meta || {};
+  $("m-id").value = m.course_id || "";
+  $("m-src").value = m.source || "corpus";
+  $("m-class").value = String(m.class || 3);
+  $("m-disc").value = m.discipline || "agility";
+  { const sz = Array.isArray(m.size_category) ? m.size_category : (m.size_category ? [m.size_category] : []);
+    document.querySelectorAll("#m-size input").forEach(i => { i.checked = sz.includes(i.value); }); }
+  $("m-judge").value = m.judge_id || "";
+  $("m-year").value = m.year || "";
+  $("m-conf").value = (m.digitization && m.digitization.confidence) || "medium";
+  $("m-notes").value = demo ? "" : (c.notes || "");
+  course.obstacles = c.obstacles.map(o => o.type === "tunnel"
+    ? { id: o.id, type: "tunnel", path: o.path.map(p => ({ x: +p.x, y: +p.y })) }
+    : { id: o.id, type: o.type, x: +o.x, y: +o.y, heading: +o.heading || 0 });
+  course.sequence = c.sequence.map(s => ({ obstacle: s.obstacle, direction: s.direction === "reverse" ? "reverse" : "forward", manual: true,
+    ...(s.path_control ? { path_control: (Array.isArray(s.path_control) ? s.path_control : [s.path_control]).map(q => ({ x: +q.x, y: +q.y })) } : {}) }));  // directions in a saved file are taken as correct
+  course.nextId = 1 + course.obstacles.reduce((mx, o) => Math.max(mx, parseInt(String(o.id).replace(/\D/g, ""), 10) || 0), 0);
+  selectedId = null; tunnelDraft = [];
+  undoStack.length = 0; redoStack.length = 0; lastSnap = snap();
+  isDemo = demo;
+}
+function newId() { return "o" + (course.nextId++); }
+
+// ---------- checks (mirrors validate.py, plus a few hints) ----------
+function issues() {
+  const errs = [], warns = [];
+  const c = buildCourse();
+  if (!/^[A-Za-z0-9+_-]+$/.test(c.meta.course_id)) errs.push("Radan tunnus saa sisältää vain kirjaimia, numeroita sekä merkit + _ -.");
+  if (c.meta.judge_id && !/^J[0-9]{2}$/.test(c.meta.judge_id)) errs.push("Tuomarin tunnus on muotoa J01 (ei nimeä).");
+  if (c.meta.source === "corpus" && !c.meta.judge_id) warns.push("Korpusradalta puuttuu tuomarin tunnus.");
+  if (!c.obstacles.length) errs.push("Kentällä ei ole esteitä.");
+  if (!c.sequence.length) errs.push("Järjestys puuttuu: klikkaa esteet Järjestys-tilassa.");
+  const ids = new Set(c.obstacles.map(o => o.id));
+  c.sequence.forEach((s, i) => { if (!ids.has(s.obstacle)) errs.push(`Järjestyksen kohta ${i + 1} viittaa poistettuun esteeseen.`); });
+  for (const o of c.obstacles) {
+    const pts = o.type === "tunnel" ? o.path : [o];
+    if (pts.some(p => p.x < 0 || p.y < 0 || p.x > field.width || p.y > field.height)) errs.push(`${FI[o.type]} ${o.id} on kehän ulkopuolella.`);
+    if (o.type === "tunnel") {
+      const L = polyLen(catmull(o.path.map(p => [p.x, p.y])));
+      if (L < 2.9 || L > 6.1) warns.push(`Putken ${o.id} pituus on ${L.toFixed(1)} m (sääntöjen mukaan 3–6 m).`);
+    }
+  }
+  const used = new Set(c.sequence.map(s => s.obstacle));
+  const unused = c.obstacles.filter(o => !used.has(o.id));
+  if (unused.length) warns.push(`Järjestyksestä puuttuu ${unused.length} estettä: ${unused.map(o => o.id).join(", ")}.`);
+  if (c.meta.discipline === "jumping" && c.obstacles.some(o => CONTACT_ZONE[o.type])) warns.push("Hyppyradalla on kontaktieste.");
+  return { errs, warns };
+}
+
+// ---------- canvas ----------
+const cv = $("cv"), ctx = cv.getContext("2d");
+let dpr = 1, raf = 0, colors = {};
+function readColors() {
+  const cs = getComputedStyle(document.documentElement);
+  for (const k of ["mark", "contact", "paper", "grid-minor", "grid-major", "accent", "ink", "warn", "err", "bg"]) colors[k] = cs.getPropertyValue("--" + k).trim();
+}
+function resize() {
+  const r = cv.getBoundingClientRect();
+  dpr = window.devicePixelRatio || 1;
+  cv.width = Math.max(1, Math.round(r.width * dpr)); cv.height = Math.max(1, Math.round(r.height * dpr));
+  redraw();
+}
+function redraw() { if (!raf) raf = requestAnimationFrame(() => { raf = 0; draw(); }); }
+const toWorld = (sx, sy) => [(sx - view.ox) / view.scale, (sy - view.oy) / view.scale];
+const px = n => n / view.scale;   // screen px -> metres
+
+function fit() {
+  const r = cv.getBoundingClientRect();
+  let x0 = 0, y0 = 0, x1 = field.width, y1 = field.height;
+  if (img && calib && showImg) {
+    const a = i2w([0, 0]), b = i2w([img.naturalWidth, img.naturalHeight]);
+    x0 = Math.min(x0, a[0]); y0 = Math.min(y0, a[1]); x1 = Math.max(x1, b[0]); y1 = Math.max(y1, b[1]);
+  }
+  const pad = 1.5;
+  view.scale = Math.max(2, Math.min((r.width - 24) / (x1 - x0 + 2 * pad), (r.height - 70) / (y1 - y0 + 2 * pad)));
+  view.ox = (r.width - (x1 - x0) * view.scale) / 2 - x0 * view.scale;
+  view.oy = Math.max(12, (r.height - 50 - (y1 - y0) * view.scale) / 2) - y0 * view.scale;
+  redraw();
+}
+
+function draw() {
+  const W = cv.width, H = cv.height;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = colors.bg; ctx.fillRect(0, 0, W, H);
+  ctx.setTransform(dpr * view.scale, 0, 0, dpr * view.scale, dpr * view.ox, dpr * view.oy);
+
+  // paper + grid
+  ctx.fillStyle = colors.paper; ctx.fillRect(0, 0, field.width, field.height);
+  if (img && calib && showImg) {
+    ctx.save(); ctx.globalAlpha = imgOpacity;
+    ctx.drawImage(img, -calib.x0 / calib.sx, -calib.y0 / calib.sy, img.naturalWidth / calib.sx, img.naturalHeight / calib.sy);
+    ctx.restore();
+  }
+  ctx.lineWidth = px(1);
+  for (let x = 0; x <= field.width + 1e-6; x++) { ctx.strokeStyle = x % 5 ? colors["grid-minor"] : colors["grid-major"]; ctx.globalAlpha = img && showImg ? 0.5 : 1; line([x, 0], [x, field.height]); }
+  for (let y = 0; y <= field.height + 1e-6; y++) { ctx.strokeStyle = y % 5 ? colors["grid-minor"] : colors["grid-major"]; line([0, y], [field.width, y]); }
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = colors.ink; ctx.lineWidth = px(1.6); ctx.strokeRect(0, 0, field.width, field.height);
+  // axis labels
+  ctx.fillStyle = "#7d8781"; ctx.font = `${px(10)}px ${getComputedStyle(document.body).getPropertyValue("--font-mono") || "monospace"}`;
+  ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+  for (let x = 0; x <= field.width; x += 5) ctx.fillText(String(x), x, -px(4));
+  ctx.textAlign = "right"; ctx.textBaseline = "middle";
+  for (let y = 0; y <= field.height; y += 5) ctx.fillText(String(y), -px(5), y);
+
+  // obstacles
+  for (const o of course.obstacles) if (o.type === "tunnel") drawTunnel(o);
+  for (const o of course.obstacles) if (o.type !== "tunnel") drawPlaced(o);
+
+  // sequence
+  const steps = course.sequence.map(s => { const o = byId(s.obstacle); return o ? { o, ...entryExit(o, s.direction) } : null; }).filter(Boolean);
+  if (showPath && steps.length) {
+    ctx.save(); ctx.strokeStyle = colors.accent; ctx.globalAlpha = 0.85; ctx.lineWidth = px(1.8); ctx.lineCap = "round"; ctx.lineJoin = "round";
+    const dpth = dogPath(), { through, gaps } = dpth;
+    for (const l of through.concat(gaps)) { ctx.beginPath(); l.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.stroke(); }
+    ctx.restore();
+  }
+  const key = JSON.stringify([course.obstacles, course.sequence, field]);
+  if (key !== labelCache.key) { const dp = dogPath(); labelCache = { key, positions: labelPositions(steps, dp.through.concat(dp.gaps)) }; }
+  const positions = labelCache.positions;
+  steps.forEach((s, i) => {
+    const pos = positions[i];
+    ctx.beginPath(); ctx.arc(pos[0], pos[1], 0.5, 0, Math.PI * 2);
+    ctx.fillStyle = "#ffffff"; ctx.fill(); ctx.lineWidth = px(1.5); ctx.strokeStyle = colors.mark; ctx.stroke();
+    ctx.fillStyle = colors.mark; ctx.font = `600 0.52px ${"IBM Plex Sans, system-ui, sans-serif"}`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(String(i + 1), pos[0], pos[1] + 0.02);
+    // small arrow at entry showing travel direction
+    const tip = add(s.entry, s.back, -0.05), tail = add(s.entry, s.back, 0.9);
+    arrow(tail, tip);
+  });
+
+  // path handles (select mode): per gap, the hand-set points (filled) plus empty handles halfway along each
+  // free stretch (dragging one adds a point there, up to three per gap)
+  pathHandles = [];
+  if (showPath && mode === "select") {
+    const dp = dogPath();
+    dp.gaps.forEach((gl, i) => {
+      const s = course.sequence[i], set = (s && s.path_control) || [];
+      set.forEach((q, k) => pathHandles.push({ i, k, pos: [q.x, q.y], set: true }));
+      if (set.length < 3 && gl.length > 2) {
+        const idxOf = q => { let b = 0, bd = Infinity; gl.forEach((p, j) => { const d = dist(p, [q.x, q.y]); if (d < bd) { bd = d; b = j; } }); return b; };
+        const cuts = [0, ...set.map(idxOf), gl.length - 1];
+        for (let c = 0; c + 1 < cuts.length; c++) {
+          const a = cuts[c], b = cuts[c + 1];
+          if (b - a > 8) pathHandles.push({ i, k: c, pos: gl[Math.floor((a + b) / 2)], set: false });  // insert index c
+        }
+      }
+    });
+    for (const h of pathHandles) {
+      ctx.beginPath(); ctx.arc(h.pos[0], h.pos[1], px(h.set ? 5.5 : 4.5), 0, Math.PI * 2);
+      ctx.fillStyle = h.set ? colors.accent : "#ffffff"; ctx.fill();
+      ctx.lineWidth = px(1.5); ctx.strokeStyle = colors.accent; ctx.stroke();
+    }
+  }
+  // gap lengths on the lines, placed clear of handles and obstacle numbers
+  if (showPath && showLengths && steps.length) drawGapLengths(dogPath(), pathHandles.map(h => h.pos).concat(positions));
+  // selection
+  const sel = selectedId && byId(selectedId);
+  if (sel) drawSelection(sel);
+  // hover outline
+  if (hover && (!sel || hover.id !== sel.id)) { ctx.save(); ctx.globalAlpha = 0.5; drawHalo(hover); ctx.restore(); }
+
+  // tunnel draft
+  if (tunnelDraft.length) {
+    ctx.save(); ctx.strokeStyle = colors.accent; ctx.lineWidth = px(2); ctx.setLineDash([px(5), px(3)]);
+    const pts = tunnelDraft.concat(lastPointer ? [lastPointer] : []);
+    ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.stroke();
+    ctx.setLineDash([]); ctx.fillStyle = colors.accent;
+    for (const p of tunnelDraft) { ctx.beginPath(); ctx.arc(p[0], p[1], px(4), 0, Math.PI * 2); ctx.fill(); }
+    ctx.restore();
+  }
+  // calibration markers
+  if (img && calib) {
+    const marks = calibPending.length ? calibPending : (mode === "calib" && calibClicks ? calibClicks : []);
+    for (const ipx of marks) {
+      const p = i2w(ipx); ctx.strokeStyle = colors.err; ctx.lineWidth = px(2);
+      line([p[0] - px(10), p[1]], [p[0] + px(10), p[1]]); line([p[0], p[1] - px(10)], [p[0], p[1] + px(10)]);
+    }
+  }
+}
+function line(p, q) { ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); ctx.stroke(); }
+function poly(pts, fill, stroke, lwPx = 1.4) {
+  ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.closePath();
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = px(lwPx); ctx.stroke(); }
+}
+function arrow(from, to) {
+  ctx.save(); ctx.strokeStyle = colors.mark; ctx.fillStyle = colors.mark; ctx.lineWidth = px(1.5); ctx.globalAlpha = 0.85;
+  line(from, to);
+  const dx = to[0] - from[0], dy = to[1] - from[1], l = Math.hypot(dx, dy) || 1, u = [dx / l, dy / l], n = [-u[1], u[0]];
+  poly([to, add(add(to, u, -0.32), n, 0.16), add(add(to, u, -0.32), n, -0.16)], colors.mark, null);
+  ctx.restore();
+}
+function tint() { return hexA(colors.mark, 0.14); }
+function hexA(hex, a) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || ""); if (!m) return `rgba(29,78,216,${a})`;
+  const n = parseInt(m[1], 16); return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`;
+}
+function drawPlaced(o) {
+  const c = [o.x, o.y], u = unit(o.heading), n = [-u[1], u[0]], d = DIMS[o.type], M = colors.mark;
+  ctx.strokeStyle = M; ctx.lineCap = "butt";
+  const bar = (p, q, w = 2.4) => { ctx.lineWidth = px(w); line(p, q); };
+  const wings = at => { for (const s of [-1, 1]) poly(rectPts(add(at, n, s * (JUMP.bar + JUMP.wing) / 2), u, JUMP.wingDepth, JUMP.wing), tint(), M, 1.2); };
+  switch (o.type) {
+    case "hurdle":
+      bar(add(c, n, -JUMP.bar / 2), add(c, n, JUMP.bar / 2), 3);
+      wings(c);
+      break;
+    case "spread":
+      for (const s of [-1, 1]) { const b = add(c, u, s * SPREAD_DEPTH / 2); bar(add(b, n, -JUMP.bar / 2), add(b, n, JUMP.bar / 2), 3); wings(b); }
+      break;
+    case "wall":
+      poly(rectPts(c, u, WALL.thickness, WALL.width), hexA(M, 0.35), M);
+      for (const s of [-1, 1]) poly(rectPts(add(c, n, s * (WALL.width + WALL.tower) / 2), u, WALL.tower, WALL.tower), M, M);
+      break;
+    case "tyre": {
+      // seen from above: a ring (drawn as a circle so it is recognisable) on a frame with two feet along the travel direction
+      const R = TYRE.opening / 2 + TYRE.ring;
+      for (const s of [-1, 1]) { const f = add(c, n, s * TYRE.frame / 2); bar(add(f, u, -TYRE.feet / 2), add(f, u, TYRE.feet / 2), 2); }
+      bar(add(c, n, -TYRE.frame / 2), add(c, n, TYRE.frame / 2), 1.2);
+      ctx.beginPath(); ctx.arc(c[0], c[1], R, 0, Math.PI * 2); ctx.fillStyle = "#ffffff"; ctx.fill(); ctx.lineWidth = px(3); ctx.strokeStyle = M; ctx.stroke();
+      ctx.beginPath(); ctx.arc(c[0], c[1], TYRE.opening / 2, 0, Math.PI * 2); ctx.lineWidth = px(1.2); ctx.stroke();
+      break;
+    }
+    case "long_jump":
+      for (let k = 0; k < 3; k++) poly(rectPts(add(c, u, -0.375 + k * 0.375), u, 0.15, 1.2 - 0.05 * k), tint(), M, 1.2);  // 3 boards, 0.9 m
+      break;
+    case "weave":
+      ctx.fillStyle = M;
+      for (let k = 0; k < 12; k++) { const p = add(c, u, -3.52 + k * 0.64); ctx.beginPath(); ctx.arc(p[0], p[1], 0.11, 0, Math.PI * 2); ctx.fill(); }
+      break;
+    default: { // contacts
+      const loc = (x, y) => add(add(c, u, x), n, y);
+      const band = (x0, x1) => [loc(x0, -widthAt(o.type, x0) / 2), loc(x1, -widthAt(o.type, x1) / 2), loc(x1, widthAt(o.type, x1) / 2), loc(x0, widthAt(o.type, x0) / 2)];
+      const h = d.depth / 2;
+      poly(o.type === "a_frame"
+        ? [loc(-h, -widthAt(o.type, h) / 2), loc(0, -A_FRAME.widthTop / 2), loc(h, -widthAt(o.type, h) / 2), loc(h, widthAt(o.type, h) / 2), loc(0, A_FRAME.widthTop / 2), loc(-h, widthAt(o.type, h) / 2)]
+        : band(-h, h), tint(), M);
+      const z = CONTACT_ZONE[o.type];
+      for (const s of [-1, 1]) poly(band(s * h, s * (h - z)), hexA(colors.contact, 0.85), M, 1);
+      if (o.type === "a_frame") bar(add(c, n, -A_FRAME.widthTop / 2), add(c, n, A_FRAME.widthTop / 2), 1.4);
+      if (o.type === "dog_walk") for (const s of [-1, 1]) { const j = add(c, u, s * DOG_WALK.plank / 2); bar(add(j, n, -0.15), add(j, n, 0.15), 1.2); }
+      if (o.type === "seesaw") poly([add(c, n, 0.42), add(add(c, n, 0.17), u, -0.25), add(add(c, n, 0.17), u, 0.25)], M, M);
+    }
+  }
+}
+function drawTunnel(o) {
+  const lineP = tunnelLine(o);
+  if (lineP.length < 2) return;
+  poly(outline(lineP, TUNNEL_W / 2), tint(), colors.mark, 1.4);
+  ctx.strokeStyle = colors.mark;
+  for (const end of ["a", "b"]) {
+    const p = end === "a" ? lineP[0] : lineP[lineP.length - 1], t = tangentOut(lineP, end), n = [-t[1], t[0]];
+    ctx.lineWidth = px(3); line(add(p, n, -0.34), add(p, n, 0.34));
+  }
+}
+function drawHalo(o) {
+  ctx.strokeStyle = colors.accent; ctx.lineWidth = px(2.5);
+  if (o.type === "tunnel") { poly(outline(tunnelLine(o), TUNNEL_W / 2 + 0.25), null, colors.accent, 2.5); return; }
+  const d = DIMS[o.type];
+  poly(rectPts([o.x, o.y], unit(o.heading), Math.max(d.depth, 0.6) + 0.5, d.width + 0.5), null, colors.accent, 2.5);
+}
+function rotHandle(o) { const d = DIMS[o.type]; return add([o.x, o.y], unit(o.heading), Math.max(d.depth, 0.6) / 2 + 1.2); }
+function drawSelection(o) {
+  drawHalo(o);
+  ctx.fillStyle = colors.accent; ctx.strokeStyle = colors.accent;
+  if (o.type === "tunnel") {
+    o.path.forEach((p, i) => {
+      ctx.beginPath(); ctx.arc(p.x, p.y, px(6), 0, Math.PI * 2);
+      ctx.fillStyle = i === 0 ? colors.accent : "#ffffff"; ctx.fill(); ctx.lineWidth = px(2); ctx.stroke();
+    });
+    return;
+  }
+  const h = rotHandle(o);
+  ctx.lineWidth = px(1.5); ctx.setLineDash([px(3), px(3)]); line([o.x, o.y], h); ctx.setLineDash([]);
+  ctx.beginPath(); ctx.arc(h[0], h[1], px(7), 0, Math.PI * 2); ctx.fillStyle = "#ffffff"; ctx.fill(); ctx.lineWidth = px(2); ctx.stroke();
+  arrowAccent(add([o.x, o.y], unit(o.heading), 0.2), add(h, unit(o.heading), -px(9)));
+}
+function arrowAccent(from, to) {
+  const dx = to[0] - from[0], dy = to[1] - from[1], l = Math.hypot(dx, dy) || 1, u = [dx / l, dy / l], n = [-u[1], u[0]];
+  poly([to, add(add(to, u, -0.3), n, 0.15), add(add(to, u, -0.3), n, -0.15)], colors.accent, null);
+}
+function footprintDist(p, o) {
+  if (o.type === "tunnel") { const l = tunnelLine(o); let m = Infinity; for (let i = 1; i < l.length; i++) m = Math.min(m, segDist(p, l[i - 1], l[i])); return Math.max(0, m - TUNNEL_W / 2); }
+  const d = DIMS[o.type], u = unit(o.heading), v = [p[0] - o.x, p[1] - o.y];
+  const a = Math.abs(v[0] * u[0] + v[1] * u[1]) - Math.max(d.depth, 0.3) / 2, b = Math.abs(-v[0] * u[1] + v[1] * u[0]) - d.width / 2;
+  return Math.hypot(Math.max(a, 0), Math.max(b, 0));
+}
+// Same placement rule as render.py: nearest free spot around the obstacle, approach side preferred.
+let labelCache = { key: null, positions: [] };
+function labelPositions(steps, pathLines) {
+  const R = 0.5, placed = [];
+  const lineDist = (p, l) => { let m = Infinity; for (let i = 1; i < l.length; i++) m = Math.min(m, segDist(p, l[i - 1], l[i])); return m; };
+  const LONG = new Set(["tunnel", "weave", "dog_walk", "a_frame", "seesaw", "long_jump"]);
+  for (const s of steps) {
+    const o = s.o, anchor = LONG.has(o.type) ? s.entry : [o.x, o.y];
+    let best = null, bestCost = Infinity;
+    for (const r of [0.75, 1.0, 1.3, 1.7, 2.2, 2.8, 3.5]) for (let k = 0; k < 24; k++) {
+      const ang = 2 * Math.PI * k / 24, c = [anchor[0] + r * Math.cos(ang), anchor[1] + r * Math.sin(ang)];
+      let cost = r + (((c[0] - anchor[0]) * s.back[0] + (c[1] - anchor[1]) * s.back[1]) >= -0.05 ? 0 : 5);  // numbers belong on the take-off side
+      for (const q of course.obstacles) if (footprintDist(c, q) < R + 0.1) cost += 100;
+      if (placed.some(q => dist(c, q) < 2 * R + 0.06)) cost += 100;
+      if (pathLines.length && Math.min(...pathLines.map(l => lineDist(c, l))) < R + 0.08) cost += 8;
+      if (c[0] < R || c[1] < R || c[0] > field.width - R || c[1] > field.height - R) cost += 50;
+      if (cost < bestCost) { best = c; bestCost = cost; }
+    }
+    placed.push(best);
+  }
+  return placed;
+}
+
+// ---------- pointer interaction ----------
+let drag = null, lastPointer = null, spaceDown = false, pathHandles = [];
+function topHit(p) { for (let i = course.obstacles.length - 1; i >= 0; i--) if (hitTest(course.obstacles[i], p)) return course.obstacles[i]; return null; }
+function pointerWorld(e) { const r = cv.getBoundingClientRect(); return toWorld(e.clientX - r.left, e.clientY - r.top); }
+
+cv.addEventListener("pointerdown", e => {
+  cv.setPointerCapture(e.pointerId);
+  const p = pointerWorld(e), r = cv.getBoundingClientRect();
+  const startPan = () => { drag = { kind: "pan", sx: e.clientX, sy: e.clientY, ox: view.ox, oy: view.oy }; };
+  if (e.button === 1 || e.button === 2 || spaceDown) return startPan();
+
+  if (mode === "calib") {
+    if (!img) { toast("Avaa ensin piirros."); return startPan(); }
+    calibPending.push(w2i(p));
+    if (calibPending.length === 2) {
+      const keep = !!calibClicks;
+      calibClicks = calibPending; calibPending = [];
+      applyCalib(calibFrom(calibClicks), keep);
+      commitSilently(); setMode("place"); fit(); toast("Mittakaava asetettu. Lisää esteet.");
+    }
+    updateStatus(); redraw(); return;
+  }
+  if (mode === "place") {
+    if (placeType === "tunnel") {
+      const last = tunnelDraft[tunnelDraft.length - 1];
+      if (!last || dist(last, p) > 0.15) tunnelDraft.push(p);
+      updateStatus(); redraw(); return;
+    }
+    const o = { id: newId(), type: placeType, x: p[0], y: p[1], heading: lastHeading[placeType] ?? 0 };
+    course.obstacles.push(o); selectedId = o.id;
+    drag = { kind: "placeHeading", o, start: p };
+    updatePanels(); redraw(); return;
+  }
+  if (mode === "select") {
+    const h = pathHandles.find(h => dist(p, h.pos) < px(9));
+    if (h) {
+      const s = course.sequence[h.i]; s.path_control = s.path_control || [];
+      if (!h.set) s.path_control.splice(h.k, 0, { x: p[0], y: p[1] });   // new point inserted in travel order
+      drag = { kind: "control", i: h.i, k: h.k }; return;
+    }
+    const sel = selectedId && byId(selectedId);
+    if (sel && sel.type !== "tunnel" && dist(p, rotHandle(sel)) < px(12)) { drag = { kind: "rotate", o: sel }; return; }
+    if (sel && sel.type === "tunnel") {
+      const i = sel.path.findIndex(q => dist(p, [q.x, q.y]) < px(10));
+      if (i >= 0) { drag = { kind: "vertex", o: sel, i }; return; }
+    }
+    const hit = topHit(p);
+    if (hit) { selectedId = hit.id; drag = { kind: "move", o: hit, last: p }; updatePanels(); redraw(); return; }
+    selectedId = null; updatePanels(); redraw(); return startPan();
+  }
+  if (mode === "seq") {
+    const hit = topHit(p);
+    if (!hit) return startPan();
+    course.sequence.push({ obstacle: hit.id, direction: "forward" });
+    orientSteps(Math.max(0, course.sequence.length - 2));  // the new step, and the previous one now that its next is known
+    selectedId = hit.id; commit(); return;
+  }
+});
+cv.addEventListener("pointermove", e => {
+  const p = pointerWorld(e); lastPointer = p;
+  if (!drag) {
+    const h = (mode === "select" || mode === "seq") ? topHit(p) : null;
+    if ((h && h.id) !== (hover && hover.id)) { hover = h; redraw(); }
+    if (tunnelDraft.length) redraw();
+    const onHandle = mode === "select" && pathHandles.some(h => dist(p, h.pos) < px(9));
+    cv.style.cursor = spaceDown ? "grab" : mode === "place" || mode === "calib" ? "crosshair" : (h || onHandle) ? "pointer" : "default";
+    return;
+  }
+  if (drag.kind === "pan") { view.ox = drag.ox + e.clientX - drag.sx; view.oy = drag.oy + e.clientY - drag.sy; cv.style.cursor = "grabbing"; redraw(); return; }
+  if (drag.kind === "placeHeading" || drag.kind === "rotate") {
+    const c = drag.kind === "rotate" ? [drag.o.x, drag.o.y] : drag.start;
+    if (dist(p, c) > 0.35) {
+      let h = norm360(Math.atan2(p[1] - c[1], p[0] - c[0]) * 180 / Math.PI);
+      h = e.shiftKey ? Math.round(h) : Math.round(h / 5) * 5;
+      drag.o.heading = norm360(h);
+    }
+    updateSelPanel(); redraw(); return;
+  }
+  if (drag.kind === "move") {
+    const dx = p[0] - drag.last[0], dy = p[1] - drag.last[1]; drag.last = p;
+    moveBy(drag.o, dx, dy); updateSelPanel(); redraw(); return;
+  }
+  if (drag.kind === "vertex") { drag.o.path[drag.i] = { x: p[0], y: p[1] }; updateSelPanel(); redraw(); return; }
+  if (drag.kind === "control") { course.sequence[drag.i].path_control[drag.k] = { x: p[0], y: p[1] }; redraw(); }
+});
+function endDrag() {
+  if (!drag) return;
+  if (drag.kind === "placeHeading") lastHeading[drag.o.type] = drag.o.heading;
+  const wasEdit = drag.kind !== "pan"; drag = null;
+  if (wasEdit) commit();
+  cv.style.cursor = "default";
+}
+cv.addEventListener("pointerup", endDrag);
+cv.addEventListener("pointercancel", endDrag);
+cv.addEventListener("contextmenu", e => e.preventDefault());
+cv.addEventListener("dblclick", e => {
+  if (mode === "place" && placeType === "tunnel") { finishTunnel(); return; }
+  if (mode === "select") {  // double-click a hand-set handle: back to the automatic line
+    const p = pointerWorld(e), h = pathHandles.find(h => dist(p, h.pos) < px(9));
+    if (h && h.set) {
+      const s = course.sequence[h.i]; s.path_control.splice(h.k, 1); if (!s.path_control.length) delete s.path_control;
+      commit(); toast(s.path_control ? "Piste poistettu." : "Reitti palautettu automaattiseksi.");
+    }
+  }
+});
+cv.addEventListener("wheel", e => {
+  e.preventDefault();
+  const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
+  const before = toWorld(sx, sy);
+  view.scale = Math.min(400, Math.max(2, view.scale * Math.pow(1.0015, -e.deltaY)));
+  view.ox = sx - before[0] * view.scale; view.oy = sy - before[1] * view.scale; redraw();
+}, { passive: false });
+
+function moveBy(o, dx, dy) {
+  if (o.type === "tunnel") o.path = o.path.map(q => ({ x: q.x + dx, y: q.y + dy }));
+  else { o.x += dx; o.y += dy; }
+}
+function finishTunnel() {
+  if (tunnelDraft.length < 2) { toast("Putkeen tarvitaan vähintään kaksi pistettä."); return; }
+  const o = { id: newId(), type: "tunnel", path: tunnelDraft.map(([x, y]) => ({ x, y })) };
+  course.obstacles.push(o); tunnelDraft = []; selectedId = o.id; commit(); updateStatus();
+}
+function deleteSelected() {
+  if (!selectedId) return;
+  course.obstacles = course.obstacles.filter(o => o.id !== selectedId);
+  course.sequence = course.sequence.filter(s => s.obstacle !== selectedId);
+  selectedId = null; commit();
+}
+function commitSilently() { lastSnap = snap(); changed(); }
+
+// ---------- keyboard ----------
+document.addEventListener("keydown", e => {
+  const tag = (e.target.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "select" || tag === "textarea") return;
+  const k = e.key, sel = selectedId && byId(selectedId);
+  if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+  if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "y") { e.preventDefault(); redo(); return; }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (k === " ") { spaceDown = true; e.preventDefault(); return; }
+  const t = TYPES.find(x => x.key === k);
+  if (t) { placeType = t.t; setMode("place"); return; }
+  switch (k.toLowerCase()) {
+    case "v": setMode("select"); return;
+    case "j": setMode("seq"); return;
+    case "k": setMode("calib"); return;
+    case "enter": if (tunnelDraft.length) { e.preventDefault(); finishTunnel(); } return;
+    case "escape": tunnelDraft = []; calibPending = []; selectedId = null; updatePanels(); redraw(); return;
+  }
+  if (mode === "seq" && k === "Backspace") { e.preventDefault(); course.sequence.pop(); commit(); return; }
+  if (!sel) { if (k.toLowerCase() === "f") fit(); return; }
+  const step = e.shiftKey ? 1 : 5, nudge = e.shiftKey ? 0.5 : 0.1;
+  const rot = d => { if (sel.type !== "tunnel") { sel.heading = norm360(sel.heading + d); commit(); } };
+  switch (k) {
+    case "q": case "Q": rot(-step); break;
+    case "e": case "E": rot(step); break;
+    case "r": case "R": rot(90); break;
+    case "f": case "F":
+      if (sel.type === "tunnel") { sel.path.reverse(); commit(); } else rot(180);
+      break;
+    case "Delete": case "Backspace": e.preventDefault(); deleteSelected(); break;
+    case "ArrowLeft": e.preventDefault(); moveBy(sel, -nudge, 0); commit(); break;
+    case "ArrowRight": e.preventDefault(); moveBy(sel, nudge, 0); commit(); break;
+    case "ArrowUp": e.preventDefault(); moveBy(sel, 0, -nudge); commit(); break;
+    case "ArrowDown": e.preventDefault(); moveBy(sel, 0, nudge); commit(); break;
+  }
+});
+document.addEventListener("keyup", e => { if (e.key === " ") spaceDown = false; });
+
+// ---------- panels ----------
+function setMode(m) {
+  mode = m; if (m !== "place") tunnelDraft = []; if (m !== "calib") calibPending = [];
+  document.querySelectorAll(".modes button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === m)));
+  renderPalette(); updateStatus(); redraw();
+}
+function updateStatus() {
+  let t;
+  if (isDemo) t = "Esimerkkirata. Avaa oma piirros (tai paina Uusi rata) aloittaaksesi.";
+  else if (mode === "calib") t = !img ? "Avaa ensin piirros." : calibPending.length ? "Klikkaa kehän oikea alakulma." : "Klikkaa kehän vasen yläkulma.";
+  else if (mode === "place") t = placeType === "tunnel"
+    ? (tunnelDraft.length ? `Putki: ${tunnelDraft.length} pistettä. Jatka klikkaamalla, lopeta Enter tai tuplaklikkaus, Esc peruu.` : "Putki: klikkaa putken alkupää.")
+    : `${FI[placeType]}: klikkaa paikka ja vedä kulkusuuntaan.`;
+  else if (mode === "seq") t = `Järjestys: klikkaa este numero ${course.sequence.length + 1}.`;
+  else t = "Valitse este klikkaamalla. Vedä tyhjää aluetta siirtääksesi näkymää, rulla zoomaa.";
+  if (img && !calibClicks && mode !== "calib" && !isDemo) t = "Aseta mittakaava ensin (K): klikkaa kehän kulmat. " + t;
+  $("status").textContent = t;
+}
+function renderPalette() {
+  const pal = $("palette"); pal.textContent = "";
+  for (const x of TYPES) {
+    const b = document.createElement("button"); b.type = "button";
+    b.setAttribute("aria-pressed", String(mode === "place" && placeType === x.t));
+    const name = document.createElement("span"); name.textContent = x.fi;
+    const kb = document.createElement("kbd"); kb.textContent = x.key;
+    b.append(name, kb);
+    b.addEventListener("click", () => { placeType = x.t; setMode("place"); });
+    pal.append(b);
+  }
+}
+function updateSelPanel() {
+  const o = selectedId && byId(selectedId);
+  $("sel-none").hidden = !!o; $("sel-body").hidden = !o; $("sel-id").textContent = o ? o.id : "–";
+  if (!o) return;
+  const ts = $("sel-type");
+  if (!ts.options.length) for (const x of TYPES) ts.add(new Option(x.fi, x.t));
+  ts.value = o.type;
+  for (const opt of ts.options) opt.disabled = (o.type === "tunnel") !== (opt.value === "tunnel");
+  const isT = o.type === "tunnel";
+  for (const id of ["sel-x", "sel-y", "sel-h"]) $(id).disabled = isT;
+  if (!isT) {
+    if (document.activeElement !== $("sel-x")) $("sel-x").value = r2(o.x);
+    if (document.activeElement !== $("sel-y")) $("sel-y").value = r2(o.y);
+    if (document.activeElement !== $("sel-h")) $("sel-h").value = Math.round(o.heading);
+  } else { $("sel-x").value = ""; $("sel-y").value = ""; $("sel-h").value = ""; }
+  $("sel-tunnel").hidden = !isT;
+  if (isT) $("sel-tunnel").textContent = `${o.path.length} pistettä, pituus ${polyLen(tunnelLine(o)).toFixed(2)} m (lähin putkipituus ${nominalTunnel(polyLen(tunnelLine(o)))} m${Math.abs(polyLen(tunnelLine(o)) - nominalTunnel(polyLen(tunnelLine(o)))) > 0.25 ? " – tarkista putken pisteet" : ""}). Vihreä piste on pää A. Vedä pisteitä muokataksesi, F kääntää suunnan.`;
+}
+function updateSeq() {
+  const ol = $("seq"); ol.textContent = "";
+  $("seq-count").textContent = String(course.sequence.length);
+  if (!course.sequence.length) { const li = document.createElement("li"); li.className = "empty"; li.textContent = "Ei vielä suorituksia."; ol.append(li); return; }
+  course.sequence.forEach((s, i) => {
+    const o = byId(s.obstacle), li = document.createElement("li");
+    if (s.obstacle === selectedId) li.className = "sel";
+    const n = document.createElement("span"); n.className = "n"; n.textContent = String(i + 1);
+    const name = document.createElement("span"); name.textContent = o ? `${FI[o.type]} · ${o.id}` : `(poistettu ${s.obstacle})`;
+    if (s.direction === "reverse") { const rv = document.createElement("span"); rv.className = "rev"; rv.textContent = " ← vastasuuntaan"; name.append(rv); }
+    const flip = document.createElement("button"); flip.type = "button"; flip.textContent = "⇄"; flip.title = "Vaihda suunta"; flip.setAttribute("aria-label", `Vaihda kohdan ${i + 1} suunta`);
+    flip.addEventListener("click", () => { s.direction = s.direction === "reverse" ? "forward" : "reverse"; s.manual = true; commit(); });
+    const del = document.createElement("button"); del.type = "button"; del.textContent = "×"; del.title = "Poista kohta"; del.setAttribute("aria-label", `Poista kohta ${i + 1}`);
+    del.addEventListener("click", () => { course.sequence.splice(i, 1); commit(); });
+    li.append(n, name, flip, del);
+    li.addEventListener("click", ev => { if (ev.target.tagName !== "BUTTON" && o) { selectedId = o.id; updatePanels(); redraw(); } });
+    ol.append(li);
+  });
+}
+function updateIssues() {
+  const { errs, warns } = issues(), ul = $("issues"); ul.textContent = "";
+  const add1 = (cls, mark, text) => { const li = document.createElement("li"); const a = document.createElement("span"); a.className = cls; a.textContent = mark; const b = document.createElement("span"); b.textContent = text; li.append(a, b); ul.append(li); };
+  errs.forEach(t => add1("e", "✕", t)); warns.forEach(t => add1("w", "!", t));
+  if (!errs.length && !warns.length) add1("o", "✓", "Rakenne kunnossa. Vertaa vielä piirrokseen ennen tallennusta.");
+  const pill = $("chk-pill");
+  pill.textContent = errs.length ? `${errs.length} virhettä` : warns.length ? `${warns.length} huomiota` : "OK";
+  pill.className = "pill " + (errs.length ? "bad" : "ok");
+  if ($("json-details").open) $("json-out").value = JSON.stringify(buildCourse(), null, 2);
+}
+function updateCalibPill() {
+  const p = $("calib-pill");
+  if (!img) { p.textContent = "ei piirrosta"; p.className = "pill"; }
+  else if (!calibClicks) { p.textContent = "asettamatta"; p.className = "pill bad"; }
+  else { p.textContent = `${calib.sx.toFixed(1)} px/m`; p.className = "pill ok"; }
+}
+function updatePanels() { updateSelPanel(); updateSeq(); updateIssues(); updateCalibPill(); updateStatus(); $("undo").disabled = !undoStack.length; $("redo").disabled = !redoStack.length; }
+
+// selected-obstacle inputs
+for (const id of ["sel-x", "sel-y", "sel-h"]) $(id).addEventListener("change", () => {
+  const o = selectedId && byId(selectedId); if (!o || o.type === "tunnel") return;
+  const v = parseFloat($(id).value); if (!isFinite(v)) return;
+  if (id === "sel-x") o.x = v; else if (id === "sel-y") o.y = v; else o.heading = norm360(v);
+  commit();
+});
+$("sel-type").addEventListener("change", () => { const o = selectedId && byId(selectedId); if (o && o.type !== "tunnel" && $("sel-type").value !== "tunnel") { o.type = $("sel-type").value; commit(); } });
+$("sel-del").addEventListener("click", deleteSelected);
+$("seq-orient").addEventListener("click", () => {
+  const before = course.sequence.map(s => s.direction);
+  orientSteps(0); commit();
+  const n = course.sequence.filter((s, i) => s.direction !== before[i]).length;
+  toast(n ? `Suunta vaihtui ${n} kohdassa. Käsin asetetut ja tiedostosta luetut suunnat pidettiin.` : "Ei muutettavaa: käsin asetetut ja tiedostosta luetut suunnat pidetään aina.");
+});
+
+// meta + field inputs
+for (const id of ["m-id", "m-src", "m-class", "m-disc", "m-judge", "m-year", "m-conf", "m-notes"]) $(id).addEventListener("input", () => { isDemo = false; saveDraft(); updateIssues(); updateStatus(); });
+$("m-size").addEventListener("change", () => { isDemo = false; saveDraft(); updateIssues(); });
+function fieldChanged() {
+  const w = parseFloat($("f-w").value), h = parseFloat($("f-h").value);
+  if (!(w > 0 && h > 0)) return;
+  field = { width: w, height: h };
+  if (img && calibClicks) applyCalib(calibFrom(calibClicks), true);
+  isDemo = false; changed(); fit();
+}
+$("f-w").addEventListener("change", fieldChanged); $("f-h").addEventListener("change", fieldChanged);
+$("show-img").addEventListener("change", e => { showImg = e.target.checked; redraw(); });
+$("show-path").addEventListener("change", e => { showPath = e.target.checked; redraw(); });
+$("show-len").addEventListener("change", e => { showLengths = e.target.checked; redraw(); });
+$("img-op").addEventListener("input", e => { imgOpacity = parseFloat(e.target.value); redraw(); });
+$("calib-start").addEventListener("click", () => setMode("calib"));
+$("json-details").addEventListener("toggle", updateIssues);
+document.querySelectorAll(".modes button").forEach(b => b.addEventListener("click", () => setMode(b.dataset.mode)));
+$("undo").addEventListener("click", undo); $("redo").addEventListener("click", redo);
+$("fit").addEventListener("click", fit);
+
+// new course: two-step confirm (no dialogs inside the viewer)
+let newArmed = 0;
+$("new").addEventListener("click", () => {
+  const b = $("new");
+  if (!newArmed && !isDemo && course.obstacles.length) {
+    b.textContent = "Vahvista tyhjennys"; newArmed = setTimeout(() => { b.textContent = "Uusi rata"; newArmed = 0; }, 3000); return;
+  }
+  clearTimeout(newArmed); newArmed = 0; b.textContent = "Uusi rata";
+  const keepField = { width: field.width, height: field.height };
+  loadCourse({ meta: { course_id: "C-J01-01", source: "corpus", class: 3, discipline: "agility" }, field: keepField, obstacles: [], sequence: [] });
+  isDemo = false; saveDraft(); updatePanels(); fit(); setMode(img && !calibClicks ? "calib" : "place");
+  toast("Uusi rata aloitettu.");
+});
+
+// ---------- files ----------
+$("img-in").addEventListener("change", e => {
+  const f = e.target.files && e.target.files[0]; if (!f) return;
+  const url = URL.createObjectURL(f), im = new Image();
+  im.onload = () => {
+    img = im; calibClicks = null; calibPending = [];
+    if (isDemo) { loadCourse({ meta: { course_id: "C-J01-01", source: "corpus", class: 3, discipline: "agility" }, field, obstacles: [], sequence: [] }); isDemo = false; }
+    calib = { x0: 0, y0: 0, sx: im.naturalWidth / field.width, sy: im.naturalWidth / field.width };
+    showImg = true; $("show-img").checked = true;
+    updatePanels(); setMode("calib"); fit();
+    toast("Piirros avattu. Se pysyy vain tässä selaimessa.");
+  };
+  im.onerror = () => toast("Kuvaa ei voitu avata. Kokeile PNG- tai JPG-tiedostoa.");
+  im.src = url; e.target.value = "";
+});
+$("json-in").addEventListener("change", e => {
+  const f = e.target.files && e.target.files[0]; if (!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    try { loadCourse(JSON.parse(rd.result)); saveDraft(); updatePanels(); fit(); setMode("select"); toast(`Avattu ${f.name}.`); }
+    catch (err) { toast("JSON-tiedostoa ei voitu lukea: " + err.message); }
+  };
+  rd.readAsText(f); e.target.value = "";
+});
+
+const downloadsP = (window.claude && typeof window.claude.use === "function") ? window.claude.use("downloads").catch(() => null) : Promise.resolve(null);
+$("save").addEventListener("click", async () => {
+  const c = buildCourse(), text = JSON.stringify(c, null, 2) + "\n";
+  const { errs } = issues();
+  const filename = (c.meta.course_id || "rata") + ".json";
+  const dl = await downloadsP;
+  if (dl) {
+    try { await dl.save({ filename, data: text }); toast(errs.length ? `Tallennettu ${filename} (${errs.length} virhettä korjaamatta).` : `Tallennettu ${filename}.`); }
+    catch (err) { toast(err && err.code === "declined" ? "Tallennus peruttiin." : "Tallennus ei onnistunut tässä näkymässä. Käytä Kopioi JSON."); }
+    return;
+  }
+  try {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text], { type: "application/json" })); a.download = filename;
+    document.body.append(a); a.click(); a.remove();
+    toast(`Tallennetaan ${filename}. Jos mitään ei tapahdu, käytä Kopioi JSON.`);
+  } catch (err) { toast("Tallennus ei onnistunut. Käytä Kopioi JSON."); }
+});
+$("copy").addEventListener("click", () => {
+  const text = JSON.stringify(buildCourse(), null, 2);
+  const fallback = () => { $("json-details").open = true; $("json-out").value = text; $("json-out").focus(); $("json-out").select(); toast("Kopioi JSON tekstikentästä (Ctrl+C)."); };
+  try { navigator.clipboard.writeText(text).then(() => toast("JSON kopioitu leikepöydälle."), fallback); } catch (e) { fallback(); }
+});
+
+let toastT = 0;
+function toast(t) { const el = $("toast"); el.textContent = t; el.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove("show"), 3200); }
+
+// ---------- boot ----------
+readColors();
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { readColors(); redraw(); });
+new MutationObserver(() => { readColors(); redraw(); }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+let draft = null;
+try { const s = localStorage.getItem(DRAFT_KEY); if (s) draft = JSON.parse(s); } catch (e) { draft = null; }
+try { draft ? loadCourse(draft) : loadCourse(DEMO, { demo: true }); } catch (e) { loadCourse(DEMO, { demo: true }); }
+renderPalette(); updatePanels();
+new ResizeObserver(() => { resize(); }).observe($("stage"));
+resize(); fit();
+if (draft) toast("Keskeneräinen rata palautettu tästä selaimesta.");
+})();
+</script>
+
+</body>
+</html>
